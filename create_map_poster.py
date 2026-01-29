@@ -1,4 +1,17 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import sys
+import io
+
+# Force UTF-8 encoding for Windows console (only if stdout has a buffer attribute)
+if sys.platform == 'win32':
+    try:
+        if hasattr(sys.stdout, 'buffer'):
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+        if hasattr(sys.stderr, 'buffer'):
+            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+    except:
+        pass  # Already redirected or wrapped
 """
 City Map Poster Generator
 
@@ -17,6 +30,25 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import cast
+
+# Workaround for PyInstaller: Mock package metadata if not available
+import sys
+if getattr(sys, 'frozen', False):
+    # Running as exe - mock metadata to prevent errors
+    try:
+        import importlib.metadata as metadata
+        original_version = metadata.version
+        
+        def version_with_fallback(package_name):
+            try:
+                return original_version(package_name)
+            except:
+                # Return a dummy version for packages that can't find their metadata
+                return "1.0.0"
+        
+        metadata.version = version_with_fallback
+    except:
+        pass
 
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
@@ -180,7 +212,7 @@ def load_theme(theme_name="terracotta"):
     theme_file = os.path.join(THEMES_DIR, f"{theme_name}.json")
 
     if not os.path.exists(theme_file):
-        print(f"⚠ Theme file '{theme_file}' not found. Using default terracotta theme.")
+        print(f"[WARN] Theme file '{theme_file}' not found. Using default terracotta theme.")
         # Fallback to embedded terracotta theme
         return {
             "name": "Terracotta",
@@ -200,7 +232,7 @@ def load_theme(theme_name="terracotta"):
 
     with open(theme_file, "r") as f:
         theme = json.load(f)
-        print(f"✓ Loaded theme: {theme.get('name', theme_name)}")
+        print(f"[OK] Loaded theme: {theme.get('name', theme_name)}")
         if "description" in theme:
             print(f"  {theme['description']}")
         return theme
@@ -323,7 +355,7 @@ def get_coordinates(city, country):
     coords = f"coords_{city.lower()}_{country.lower()}"
     cached = cache_get(coords)
     if cached:
-        print(f"✓ Using cached coordinates for {city}, {country}")
+        print(f"[OK] Using cached coordinates for {city}, {country}")
         return cached
 
     print("Looking up coordinates...")
@@ -356,10 +388,10 @@ def get_coordinates(city, country):
         # Use getattr to safely access address (helps static analyzers)
         addr = getattr(location, "address", None)
         if addr:
-            print(f"✓ Found: {addr}")
+            print(f"[OK] Found: {addr}")
         else:
-            print("✓ Found location (address not available)")
-        print(f"✓ Coordinates: {location.latitude}, {location.longitude}")
+            print("[OK] Found location (address not available)")
+        print(f"[OK] Coordinates: {location.latitude}, {location.longitude}")
         try:
             cache_set(coords, (location.latitude, location.longitude))
         except CacheError as e:
@@ -423,7 +455,7 @@ def fetch_graph(point, dist) -> MultiDiGraph | None:
     graph = f"graph_{lat}_{lon}_{dist}"
     cached = cache_get(graph)
     if cached is not None:
-        print("✓ Using cached street network")
+        print("[OK] Using cached street network")
         return cast(MultiDiGraph, cached)
 
     try:
@@ -461,7 +493,7 @@ def fetch_features(point, dist, tags, name) -> GeoDataFrame | None:
     features = f"{name}_{lat}_{lon}_{dist}_{tag_str}"
     cached = cache_get(features)
     if cached is not None:
-        print(f"✓ Using cached {name}")
+        print(f"[OK] Using cached {name}")
         return cast(GeoDataFrame, cached)
 
     try:
@@ -556,7 +588,7 @@ def create_poster(
         )
         pbar.update(1)
 
-    print("✓ All data retrieved successfully!")
+    print("[OK] All data retrieved successfully!")
 
     # 2. Setup Plot
     print("Rendering map...")
@@ -578,7 +610,9 @@ def create_poster(
                 water_polys = ox.projection.project_gdf(water_polys)
             except Exception:
                 water_polys = water_polys.to_crs(g_proj.graph['crs'])
-            water_polys.plot(ax=ax, facecolor=THEME['water'], edgecolor='none', zorder=0.5)
+            # Conditionally plot water
+            if not args.no_water:
+                water_polys.plot(ax=ax, facecolor=THEME['water'], edgecolor='none', zorder=0.5)
 
     if parks is not None and not parks.empty:
         # Filter to only polygon/multipolygon geometries to avoid point features showing as dots
@@ -589,7 +623,9 @@ def create_poster(
                 parks_polys = ox.projection.project_gdf(parks_polys)
             except Exception:
                 parks_polys = parks_polys.to_crs(g_proj.graph['crs'])
-            parks_polys.plot(ax=ax, facecolor=THEME['parks'], edgecolor='none', zorder=0.8)
+            # Conditionally plot parks
+            if not args.no_parks:
+                parks_polys.plot(ax=ax, facecolor=THEME['parks'], edgecolor='none', zorder=0.8)
     # Layer 2: Roads with hierarchy coloring
     print("Applying road hierarchy colors...")
     edge_colors = get_edge_colors_by_type(g_proj)
@@ -598,7 +634,9 @@ def create_poster(
     # Determine cropping limits to maintain the poster aspect ratio
     crop_xlim, crop_ylim = get_crop_limits(g_proj, point, fig, compensated_dist)
     # Plot the projected graph and then apply the cropped limits
-    ox.plot_graph(
+    # Conditionally plot roads
+    if not args.no_roads:
+        ox.plot_graph(
         g_proj, ax=ax, bgcolor=THEME['bg'],
         node_size=0,
         edge_color=edge_colors,
@@ -620,33 +658,19 @@ def create_poster(
 
     # Base font sizes (at 12 inches width)
     BASE_MAIN = 60
-    BASE_SUB = 22
-    BASE_COORDS = 14
+    BASE_SUB = 30
+    BASE_COORDS = 22
     BASE_ATTR = 8
 
     # 4. Typography - use custom fonts if provided, otherwise use default FONTS
     active_fonts = fonts or FONTS
-    if active_fonts:
-        # font_main is calculated dynamically later based on length
-        font_sub = FontProperties(
-            fname=active_fonts["light"], size=BASE_SUB * scale_factor
-        )
-        font_coords = FontProperties(
-            fname=active_fonts["regular"], size=BASE_COORDS * scale_factor
-        )
-        font_attr = FontProperties(
-            fname=active_fonts["light"], size=BASE_ATTR * scale_factor
-        )
-    else:
-        # Fallback to system fonts
-        font_sub = FontProperties(
-            family="monospace", weight="normal", size=BASE_SUB * scale_factor
-        )
-        font_coords = FontProperties(
-            family="monospace", size=BASE_COORDS * scale_factor
-        )
-        font_attr = FontProperties(family="monospace", size=BASE_ATTR * scale_factor)
-
+# --- FORCED LOCAL FONTS & BIGGER SIZES ---
+# Use the font family from the GUI directly for all elements
+    font_main = FontProperties(family=args.font_family, weight="bold", size=BASE_MAIN * scale_factor)
+    font_sub = FontProperties(family=args.font_family, weight="normal", size=BASE_SUB * scale_factor)
+    font_coords = FontProperties(family=args.font_family, weight="normal", size=BASE_COORDS * scale_factor)
+# Attribution font (usually smaller)
+    font_attr = FontProperties(family="monospace", size=BASE_ATTR * scale_factor)
     # Format city name based on script type
     # Latin scripts: apply uppercase and letter spacing for aesthetic
     # Non-Latin scripts (CJK, Thai, Arabic, etc.): no spacing, preserve case structure
@@ -670,15 +694,12 @@ def create_poster(
     else:
         adjusted_font_size = base_adjusted_main
 
-    if active_fonts:
-        font_main_adjusted = FontProperties(
-            fname=active_fonts["bold"], size=adjusted_font_size
-        )
-    else:
-        font_main_adjusted = FontProperties(
-            family="monospace", weight="bold", size=adjusted_font_size
-        )
-
+    # Force the adjusted city font to use your local GUI selection
+    font_main_adjusted = FontProperties(
+        family=args.font_family, weight="bold", size=adjusted_font_size
+    )
+       
+    
     # --- BOTTOM TEXT ---
     ax.text(
         0.5,
@@ -693,7 +714,7 @@ def create_poster(
 
     ax.text(
         0.5,
-        0.10,
+        0.09,
         display_country.upper(),
         transform=ax.transAxes,
         color=THEME["text"],
@@ -713,7 +734,7 @@ def create_poster(
 
     ax.text(
         0.5,
-        0.07,
+        0.05,
         coords,
         transform=ax.transAxes,
         color=THEME["text"],
@@ -725,7 +746,7 @@ def create_poster(
 
     ax.plot(
         [0.4, 0.6],
-        [0.125, 0.125],
+        [0.120, 0.120],
         transform=ax.transAxes,
         color=THEME["text"],
         linewidth=1 * scale_factor,
@@ -741,7 +762,7 @@ def create_poster(
     ax.text(
         0.98,
         0.02,
-        "© OpenStreetMap contributors",
+        "  ",
         transform=ax.transAxes,
         color=THEME["text"],
         alpha=0.5,
@@ -768,7 +789,7 @@ def create_poster(
     plt.savefig(output_file, format=fmt, **save_kwargs)
 
     plt.close()
-    print(f"✓ Done! Poster saved as {output_file}")
+    print(f"[OK] Done! Poster saved as {output_file}")
 
 
 def print_examples():
@@ -914,6 +935,13 @@ Examples:
         help="Map radius in meters (default: 18000)",
     )
     parser.add_argument(
+        "--network-type",
+        type=str,
+        default="drive",
+        choices=["drive", "all", "walk", "bike"],
+        help="Type of street network to download (default: drive)",
+    )
+    parser.add_argument(
         "--width",
         "-W",
         type=float,
@@ -926,6 +954,12 @@ Examples:
         type=float,
         default=16,
         help="Image height in inches (default: 16, max: 20)",
+    )
+    parser.add_argument(
+        "--dpi",
+        type=int,
+        default=300,
+        help="Output resolution in DPI (default: 300)",
     )
     parser.add_argument(
         "--list-themes", action="store_true", help="List all available themes"
@@ -955,6 +989,17 @@ Examples:
         help="Output format for the poster (default: png)",
     )
 
+    
+    
+    
+    # Feature toggles
+    parser.add_argument('--no-roads', action='store_true',
+                       help='Hide roads/streets from the map')
+    parser.add_argument('--no-water', action='store_true',
+                       help='Hide water bodies from the map')
+    parser.add_argument('--no-parks', action='store_true',
+                       help='Hide parks/green spaces from the map')
+    
     args = parser.parse_args()
 
     # If no arguments provided, show examples
@@ -976,12 +1021,12 @@ Examples:
     # Enforce maximum dimensions
     if args.width > 20:
         print(
-            f"⚠ Width {args.width} exceeds the maximum allowed limit of 20. It's enforced as max limit 20."
+            f"[WARN] Width {args.width} exceeds the maximum allowed limit of 20. It's enforced as max limit 20."
         )
         args.width = 20.0
     if args.height > 20:
         print(
-            f"⚠ Height {args.height} exceeds the maximum allowed limit of 20. It's enforced as max limit 20."
+            f"[WARN] Height {args.height} exceeds the maximum allowed limit of 20. It's enforced as max limit 20."
         )
         args.height = 20.0
 
@@ -1006,9 +1051,8 @@ Examples:
     # Load custom fonts if specified
     custom_fonts = None
     if args.font_family:
-        custom_fonts = load_fonts(args.font_family)
-        if not custom_fonts:
-            print(f"⚠ Failed to load '{args.font_family}', falling back to Roboto")
+        custom_fonts = load_fonts(getattr(args, "font_family", None))
+        # Note: custom_fonts=None is OK - it means use system font via matplotlib
 
     # Get coordinates and generate poster
     try:
@@ -1016,7 +1060,7 @@ Examples:
             lat = parse(args.latitude)
             lon = parse(args.longitude)
             coords = [lat, lon]
-            print(f"✓ Coordinates: {', '.join([str(i) for i in coords])}")
+            print(f"[OK] Coordinates: {', '.join([str(i) for i in coords])}")
         else:
             coords = get_coordinates(args.city, args.country)
 
@@ -1032,18 +1076,17 @@ Examples:
                 args.format,
                 args.width,
                 args.height,
-                country_label=args.country_label,
                 display_city=args.display_city,
                 display_country=args.display_country,
                 fonts=custom_fonts,
             )
 
         print("\n" + "=" * 50)
-        print("✓ Poster generation complete!")
+        print("[OK] Poster generation complete!")
         print("=" * 50)
 
     except Exception as e:
-        print(f"\n✗ Error: {e}")
+        print(f"\n[FAIL] Error: {e}")
         import traceback
 
         traceback.print_exc()

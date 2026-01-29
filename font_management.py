@@ -105,7 +105,7 @@ def download_google_font(font_family: str, weights: list = None) -> Optional[dic
                         font_response.raise_for_status()
                         font_path.write_bytes(font_response.content)
                     except Exception as e:
-                        print(f"  ⚠ Failed to download {weight_key}: {e}")
+                        print(f"  [WARN] Failed to download {weight_key}: {e}")
                         continue
                 else:
                     print(f"  Using cached {font_family} {weight_key}")
@@ -129,7 +129,7 @@ def download_google_font(font_family: str, weights: list = None) -> Optional[dic
         return font_files if font_files else None
 
     except Exception as e:
-        print(f"⚠ Error downloading Google Font '{font_family}': {e}")
+        print(f"[WARN] Error downloading Google Font '{font_family}': {e}")
         return None
 
 
@@ -148,10 +148,33 @@ def load_fonts(font_family: Optional[str] = None) -> Optional[dict]:
         print(f"Loading Google Font: {font_family}")
         fonts = download_google_font(font_family)
         if fonts:
-            print(f"✓ Font '{font_family}' loaded successfully")
+            print(f"[OK] Font '{font_family}' loaded from Google Fonts")
             return fonts
         else:
-            print(f"⚠ Failed to load '{font_family}', falling back to local Roboto")
+            # Google Fonts download failed - try system fonts
+            print(f"[INFO] '{font_family}' not available on Google Fonts, checking system fonts...")
+            
+            # Try to find the font in system fonts using matplotlib
+            try:
+                import matplotlib.font_manager as fm
+                
+                # Search for the font in system fonts
+                available_fonts = [f.name for f in fm.fontManager.ttflist]
+                
+                if font_family in available_fonts:
+                    print(f"[OK] Using system font '{font_family}'")
+                    # Return None to signal: use matplotlib's default font matching
+                    # The create_map_poster script will handle this with font_family parameter
+                    return None
+                else:
+                    print(f"[WARN] '{font_family}' not found in system fonts")
+                    close_matches = [f for f in available_fonts if font_family.lower() in f.lower()]
+                    if close_matches:
+                        print(f"[INFO] Similar fonts available: {', '.join(close_matches[:3])}")
+            except Exception as e:
+                print(f"[WARN] Could not check system fonts: {e}")
+            
+            print(f"[INFO] Falling back to local Roboto fonts")
 
     # Default: Load local Roboto fonts
     fonts = {
@@ -163,7 +186,7 @@ def load_fonts(font_family: Optional[str] = None) -> Optional[dict]:
     # Verify fonts exist
     for weight, path in fonts.items():
         if not os.path.exists(path):
-            print(f"⚠ Font not found: {path}")
+            print(f"[WARN] Font not found: {path}")
             return None
 
     return fonts
