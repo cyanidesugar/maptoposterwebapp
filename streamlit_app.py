@@ -14,7 +14,7 @@ from io import StringIO
 
 # Page config
 st.set_page_config(
-    page_title="Cyanidesugar's Map Studio",
+    page_title="MapToPoster Generator",
     page_icon="🗺",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -125,6 +125,8 @@ if st.button("Generate Poster", type="primary", use_container_width=True):
         # Create a progress bar
         progress_bar = st.progress(0)
         status_text = st.empty()
+        log_container = st.expander("📋 Generation Log", expanded=True)
+        log_text = log_container.empty()
         
         with st.spinner("Generating... (30-60 seconds)"):
             try:
@@ -172,10 +174,27 @@ if st.button("Generate Poster", type="primary", use_container_width=True):
                     def __init__(self):
                         self.buffer = ""
                         self.progress = 0
+                        self.log_lines = []
                     
                     def write(self, text):
                         if text:
                             self.buffer += text
+                            
+                            # Add to log display (filter out progress bars)
+                            import re
+                            # Remove ANSI codes
+                            clean_text = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', text)
+                            clean_text = clean_text.replace('\r', '\n')
+                            
+                            # Filter progress bars
+                            for line in clean_text.split('\n'):
+                                if line.strip():
+                                    # Skip lines with lots of # characters (progress bars)
+                                    if line.count('#') < 10 and line.count('█') < 10:
+                                        self.log_lines.append(line)
+                                        # Update log display
+                                        log_text.code('\n'.join(self.log_lines[-50:]))  # Show last 50 lines
+                            
                             # Update progress based on key milestones
                             if "Looking up coordinates" in text:
                                 self.progress = 10
@@ -193,7 +212,7 @@ if st.button("Generate Poster", type="primary", use_container_width=True):
                                 self.progress = 70
                                 status_text.text("🌳 Downloading parks...")
                                 progress_bar.progress(self.progress)
-                            elif "Rendering map" in text or "Creating poster" in text:
+                            elif "Rendering map" in text or "Creating poster" in text or "Applying" in text:
                                 self.progress = 85
                                 status_text.text("🎨 Rendering map...")
                                 progress_bar.progress(self.progress)
@@ -243,9 +262,6 @@ if st.button("Generate Poster", type="primary", use_container_width=True):
                                 )
                         else:
                             st.error("No poster generated")
-                    
-                    with st.expander("📋 Generation Log"):
-                        st.code(progress_writer.buffer)
                 
                 finally:
                     sys.argv = original_argv
