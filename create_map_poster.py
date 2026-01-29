@@ -762,7 +762,7 @@ def create_poster(
     ax.text(
         0.98,
         0.02,
-        "© Cyanidesugar3DPrints",
+        "  ",
         transform=ax.transAxes,
         color=THEME["text"],
         alpha=0.5,
