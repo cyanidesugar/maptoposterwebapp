@@ -14,7 +14,7 @@ from io import StringIO
 
 # Page config
 st.set_page_config(
-    page_title="MapToPoster Generator",
+    page_title="Cyanidesugar's Map Studio",
     page_icon="🗺",
     layout="wide",
     initial_sidebar_state="expanded"
