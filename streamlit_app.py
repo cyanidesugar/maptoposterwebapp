@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """
 MapToPoster Web App using Streamlit
-Run with: streamlit run streamlit_app.py
-Deploy to: Streamlit Cloud (free)
+Simplified version with fixed DPI and limited distance
 """
 
 import streamlit as st
 import sys
 import os
 from pathlib import Path
-import base64
 from io import StringIO
 
 # Page config
@@ -57,11 +55,13 @@ with st.sidebar:
         longitude = st.number_input("Longitude", -180.0, 180.0, 2.3522, format="%.4f")
         city = "Custom"
         country = "Location"
+        display_city = None
+        display_country = None
     
     # Design
     st.subheader("Map Design")
     theme = st.selectbox("Theme", [
-        "feature_based", "gradient_roads", "contrast_zones", "noir",
+        "gradient_roads", "contrast_zones", "noir",
         "midnight_blue", "blueprint", "neon_cyberpunk", "warm_beige",
         "pastel_dream", "japanese_ink", "forest", "ocean",
         "terracotta", "sunset", "autumn", "copper_patina", "monochrome_blue"
@@ -70,7 +70,10 @@ with st.sidebar:
     # Font selection
     font_family = st.text_input("Font Family", placeholder="Arial, Roboto, Helvetica... (leave blank for default)")
     
-    distance = st.slider("Radius (m)", 1000, 50000, 15000, 1000)
+    # Distance - limited to 20000
+    distance = st.slider("Radius (m)", 1000, 20000, 10000, 1000, 
+                        help="Maximum distance: 20km to optimize performance")
+    
     network_type = st.selectbox("Network Type", ["drive", "all", "walk", "bike"])
     
     # Output
@@ -101,10 +104,10 @@ with st.sidebar:
         }
         width, height = size_map[size_preset]
     
-    dpi = st.slider("DPI (Quality)", 72, 600, 300, 50)
-    st.caption("72: Screen | 150: Draft | 300: Print | 600: High-res")
+    st.info("DPI: Fixed at 72 for web optimization")
     
     # Features
+    st.subheader("Features")
     show_roads = st.checkbox("Roads", value=True)
     show_water = st.checkbox("Water", value=True)
     show_parks = st.checkbox("Parks", value=True)
@@ -130,13 +133,13 @@ if st.button("Generate Poster", type="primary", use_container_width=True):
         
         with st.spinner("Generating... (30-60 seconds)"):
             try:
-                # Build args
+                # Build args - DPI fixed at 72
                 args = [
                     "-t", theme,
                     "-d", str(distance),
                     "-W", str(width),
                     "-H", str(height),
-                    "--dpi", str(dpi),
+                    "--dpi", "72",  # Fixed DPI
                     "--network-type", network_type
                 ]
                 
@@ -167,8 +170,6 @@ if st.button("Generate Poster", type="primary", use_container_width=True):
                 original_stdout = sys.stdout
                 original_stderr = sys.stderr
                 
-                output_buffer = StringIO()
-                
                 # Track progress based on output
                 class ProgressWriter:
                     def __init__(self):
@@ -177,49 +178,51 @@ if st.button("Generate Poster", type="primary", use_container_width=True):
                         self.log_lines = []
                     
                     def write(self, text):
-                        if text:
-                            self.buffer += text
-                            
-                            # Add to log display (filter out progress bars)
-                            import re
-                            # Remove ANSI codes
-                            clean_text = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', text)
-                            clean_text = clean_text.replace('\r', '\n')
-                            
-                            # Filter progress bars
-                            for line in clean_text.split('\n'):
-                                if line.strip():
-                                    # Skip lines with lots of # characters (progress bars)
-                                    if line.count('#') < 10 and line.count('█') < 10:
-                                        self.log_lines.append(line)
-                                        # Update log display
-                                        log_text.code('\n'.join(self.log_lines[-50:]))  # Show last 50 lines
-                            
-                            # Update progress based on key milestones
-                            if "Looking up coordinates" in text:
-                                self.progress = 10
-                                status_text.text("📍 Looking up location...")
-                                progress_bar.progress(self.progress)
-                            elif "Downloading street network" in text or "street network" in text:
-                                self.progress = 30
-                                status_text.text("🛣️ Downloading street network...")
-                                progress_bar.progress(self.progress)
-                            elif "Downloading water" in text or "water features" in text:
-                                self.progress = 50
-                                status_text.text("💧 Downloading water features...")
-                                progress_bar.progress(self.progress)
-                            elif "Downloading parks" in text or "green spaces" in text:
-                                self.progress = 70
-                                status_text.text("🌳 Downloading parks...")
-                                progress_bar.progress(self.progress)
-                            elif "Rendering map" in text or "Creating poster" in text or "Applying" in text:
-                                self.progress = 85
-                                status_text.text("🎨 Rendering map...")
-                                progress_bar.progress(self.progress)
-                            elif "Poster saved" in text or "Done!" in text:
-                                self.progress = 100
-                                status_text.text("✅ Complete!")
-                                progress_bar.progress(self.progress)
+                        if not text:
+                            return
+                        
+                        self.buffer += text
+                        
+                        # Add to log display (filter out progress bars)
+                        import re
+                        # Remove ANSI codes
+                        clean_text = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', text)
+                        clean_text = clean_text.replace('\r', '\n')
+                        
+                        # Filter progress bars
+                        for line in clean_text.split('\n'):
+                            if line.strip():
+                                # Skip lines with lots of # characters (progress bars)
+                                if line.count('#') < 10 and line.count('█') < 10:
+                                    self.log_lines.append(line)
+                                    # Update log display
+                                    log_text.code('\n'.join(self.log_lines[-50:]))  # Show last 50 lines
+                        
+                        # Update progress based on key milestones
+                        if "Looking up coordinates" in text:
+                            self.progress = 10
+                            status_text.text("📍 Looking up location...")
+                            progress_bar.progress(self.progress)
+                        elif "Downloading street network" in text or "street network" in text:
+                            self.progress = 30
+                            status_text.text("🛣️ Downloading street network...")
+                            progress_bar.progress(self.progress)
+                        elif "Downloading water" in text or "water features" in text:
+                            self.progress = 50
+                            status_text.text("💧 Downloading water features...")
+                            progress_bar.progress(self.progress)
+                        elif "Downloading parks" in text or "green spaces" in text:
+                            self.progress = 70
+                            status_text.text("🌳 Downloading parks...")
+                            progress_bar.progress(self.progress)
+                        elif "Rendering map" in text or "Creating poster" in text or "Applying" in text:
+                            self.progress = 85
+                            status_text.text("🎨 Rendering map...")
+                            progress_bar.progress(self.progress)
+                        elif "Poster saved" in text or "Done!" in text:
+                            self.progress = 100
+                            status_text.text("✅ Complete!")
+                            progress_bar.progress(self.progress)
                     
                     def flush(self):
                         pass
@@ -272,4 +275,4 @@ if st.button("Generate Poster", type="primary", use_container_width=True):
                 st.error(f"Error: {str(e)}")
 
 st.markdown("---")
-st.markdown("Map data © OpenStreetMap contributors")
+st.markdown("Map data © OpenStreetMap contributors | Created by Cyanidesugar")
