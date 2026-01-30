@@ -1,3 +1,8 @@
+# Webapp Version
+Access it through [here](https://cyanidesugarsmapstudio.streamlit.app/). 
+
+If the map freezes during generation, lower the distance setting. 
+
 # City Map Poster Generator
 
 Generate beautiful, minimalist map posters for any city in the world.
