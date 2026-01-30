@@ -27,6 +27,7 @@ import os
 import pickle
 import sys
 import time
+import gc  # Garbage collection for memory management
 from datetime import datetime
 from pathlib import Path
 from typing import cast
@@ -589,6 +590,9 @@ def create_poster(
         pbar.update(1)
 
     print("[OK] All data retrieved successfully!")
+    
+    # Free up memory before rendering
+    gc.collect()
 
     # 2. Setup Plot
     print("Rendering map...")
@@ -686,13 +690,25 @@ def create_poster(
     # We use the already scaled "main" font size as the starting point.
     base_adjusted_main = BASE_MAIN * scale_factor
     city_char_count = len(display_city)
-
-    # Heuristic: If length is > 10, start reducing.
-    if city_char_count > 10:
-        length_factor = 10 / city_char_count
-        adjusted_font_size = max(base_adjusted_main * length_factor, 10 * scale_factor)
+    
+    # For Latin scripts with letter spacing, the effective length is doubled
+    if is_latin_script(display_city):
+        effective_length = city_char_count * 2  # Account for letter spacing
+    else:
+        effective_length = city_char_count
+    
+    # More aggressive scaling to prevent text overflow
+    # Start reducing at 8 chars instead of 10
+    if effective_length > 8:
+        length_factor = 8 / effective_length
+        # Apply reduction factor with minimum size
+        adjusted_font_size = max(base_adjusted_main * length_factor, 8 * scale_factor)
     else:
         adjusted_font_size = base_adjusted_main
+    
+    # Additional check: if city name is extremely long, scale down even more
+    if effective_length > 20:
+        adjusted_font_size = max(adjusted_font_size * 0.7, 6 * scale_factor)
 
     # Force the adjusted city font to use your local GUI selection
     font_main_adjusted = FontProperties(
@@ -708,8 +724,10 @@ def create_poster(
         transform=ax.transAxes,
         color=THEME["text"],
         ha="center",
+        va="center",  # Center vertically too
         fontproperties=font_main_adjusted,
         zorder=11,
+        clip_on=False,  # Allow text to draw even if near edge
     )
 
     ax.text(
@@ -719,8 +737,10 @@ def create_poster(
         transform=ax.transAxes,
         color=THEME["text"],
         ha="center",
+        va="center",
         fontproperties=font_sub,
         zorder=11,
+        clip_on=False,
     )
 
     lat, lon = point
@@ -762,7 +782,7 @@ def create_poster(
     ax.text(
         0.98,
         0.02,
-        "  ",
+        "© Cyanidesugar3DPrints",
         transform=ax.transAxes,
         color=THEME["text"],
         alpha=0.5,
