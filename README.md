@@ -1,7 +1,7 @@
 # Webapp Version
 Access it through [here](https://cyanidesugarsmapstudio.streamlit.app/). 
 
-If the map freezes during generation, lower the distance setting. 
+If the map freezes during generation, lower the distance setting. I'm sure there are bugs to squash still, and if the map isn't generating as expected, please try the desktop version. 
 
 # City Map Poster Generator
 
