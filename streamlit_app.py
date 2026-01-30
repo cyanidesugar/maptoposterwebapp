@@ -12,7 +12,7 @@ from io import StringIO
 
 # Page config
 st.set_page_config(
-    page_title="MapToPoster Generator",
+    page_title="Cyanidesugar's Map Studio",
     page_icon="🗺",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -31,7 +31,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Title
-st.title("🗺 MapToPoster Generator")
+st.title("🗺 Cyanidesugar's Map Studio")
 st.markdown("Create beautiful, minimalist map posters")
 
 # Sidebar
