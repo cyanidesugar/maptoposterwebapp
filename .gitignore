@@ -1,4 +1,8 @@
 cache/*
+posters/
+backup/
+.claude/
+fonts/cache/
 
 # Virtual environments
 env/
@@ -10,8 +14,13 @@ venv/
 *.egg-info/
 dist/
 build/
+MapToPoster_Distribution/
+MapToPoster_Distribution.zip
 *.pyc
 __pycache__/
+
+# User-specific app settings (optional: remove to commit shared defaults)
+gui_settings.json
 
 # IDE
 .idea/

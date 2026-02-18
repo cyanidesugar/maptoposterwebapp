@@ -1,0 +1,15 @@
+{
+  "name": "Soft Sakura",
+  "description": "Gentle cherry blossom theme - muted pinks and creams",
+  "bg": "#F5E6E8",
+  "text": "#5A4A4E",
+  "gradient_color": "#F5E6E8",
+  "water": "#B8CED8",
+  "parks": "#D8E4D0",
+  "road_motorway": "#C88EA7",
+  "road_primary": "#D4A5B8",
+  "road_secondary": "#E8C4C4",
+  "road_tertiary": "#D8D0C8",
+  "road_residential": "#E4D8D8",
+  "road_default": "#D8CCC8"
+}

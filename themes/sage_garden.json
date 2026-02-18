@@ -1,0 +1,15 @@
+{
+  "name": "Sage Garden",
+  "description": "Earthy and calm - muted sage with terracotta touches",
+  "bg": "#E8EDE7",
+  "text": "#4A5249",
+  "gradient_color": "#E8EDE7",
+  "water": "#B4C7C9",
+  "parks": "#C8D5C0",
+  "road_motorway": "#B08B7A",
+  "road_primary": "#9CAF88",
+  "road_secondary": "#C4B5A0",
+  "road_tertiary": "#A8B5A0",
+  "road_residential": "#D0D5C8",
+  "road_default": "#C5CAC0"
+}

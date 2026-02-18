@@ -1,0 +1,15 @@
+{
+  "name": "Bubblegum Bright",
+  "description": "Fun and playful - white background with vibrant candy colors",
+  "bg": "#FFFFFF",
+  "text": "#2C3E50",
+  "gradient_color": "#FFFFFF",
+  "water": "#56CCF2",
+  "parks": "#6FCF97",
+  "road_motorway": "#FF6B9D",
+  "road_primary": "#BB6BD9",
+  "road_secondary": "#F2C94C",
+  "road_tertiary": "#F2994A",
+  "road_residential": "#56CCF2",
+  "road_default": "#BDC3C7"
+}

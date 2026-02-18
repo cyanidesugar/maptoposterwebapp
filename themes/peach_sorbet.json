@@ -1,0 +1,15 @@
+{
+  "name": "Peach Sorbet",
+  "description": "Soft and peachy - warm cream with coral and apricot tones",
+  "bg": "#FFF5E6",
+  "text": "#5A4A3A",
+  "gradient_color": "#FFF5E6",
+  "water": "#89CFF0",
+  "parks": "#B8E0B8",
+  "road_motorway": "#FF6F61",
+  "road_primary": "#FF8C69",
+  "road_secondary": "#FFB380",
+  "road_tertiary": "#FFDAB9",
+  "road_residential": "#E6C9A8",
+  "road_default": "#D4B5A0"
+}

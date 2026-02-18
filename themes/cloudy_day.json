@@ -1,0 +1,15 @@
+{
+  "name": "Cloudy Day",
+  "description": "Serene and misty - soft blue-grey with warm accents",
+  "bg": "#E8ECF0",
+  "text": "#4A505A",
+  "gradient_color": "#E8ECF0",
+  "water": "#A8B8C8",
+  "parks": "#C8D0C8",
+  "road_motorway": "#B09088",
+  "road_primary": "#98A8B0",
+  "road_secondary": "#B8C0C0",
+  "road_tertiary": "#C0C4C0",
+  "road_residential": "#D0D4D0",
+  "road_default": "#C8CCC8"
+}

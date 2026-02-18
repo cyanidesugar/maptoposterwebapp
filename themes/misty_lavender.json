@@ -1,0 +1,15 @@
+{
+  "name": "Misty Lavender",
+  "description": "Dreamy and subtle - greyed lavender with warm undertones",
+  "bg": "#EBE8F0",
+  "text": "#524A5A",
+  "gradient_color": "#EBE8F0",
+  "water": "#B0B8C8",
+  "parks": "#C8D0C8",
+  "road_motorway": "#A88898",
+  "road_primary": "#B898A8",
+  "road_secondary": "#C8A8B8",
+  "road_tertiary": "#D0B8C0",
+  "road_residential": "#D8C8D0",
+  "road_default": "#D0C0C8"
+}

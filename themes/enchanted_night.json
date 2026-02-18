@@ -1,0 +1,15 @@
+{
+  "name": "Enchanted Night",
+  "description": "Mystical dark theme - midnight blue with glowing magical accents",
+  "bg": "#0D1821",
+  "text": "#E8D4B0",
+  "gradient_color": "#0D1821",
+  "water": "#1B3A52",
+  "parks": "#2D4A3E",
+  "road_motorway": "#FFD700",
+  "road_primary": "#C792EA",
+  "road_secondary": "#82AAFF",
+  "road_tertiary": "#7FCDCD",
+  "road_residential": "#8AB4C1",
+  "road_default": "#7FCDCD"
+}

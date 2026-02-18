@@ -1,0 +1,15 @@
+{
+  "name": "Dusty Peach",
+  "description": "Warm and gentle - muted peach with soft grey-greens",
+  "bg": "#F0E8E0",
+  "text": "#5A4E45",
+  "gradient_color": "#F0E8E0",
+  "water": "#B8C8C8",
+  "parks": "#C8D0C0",
+  "road_motorway": "#C89878",
+  "road_primary": "#D0A888",
+  "road_secondary": "#D8B898",
+  "road_tertiary": "#D8C4A8",
+  "road_residential": "#E0D0C0",
+  "road_default": "#D8C8B8"
+}

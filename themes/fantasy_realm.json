@@ -1,0 +1,15 @@
+{
+  "name": "Fantasy Realm",
+  "description": "Ancient map aesthetic - parchment background with mystical purple and gold accents",
+  "bg": "#F4E9D7",
+  "text": "#3D2817",
+  "gradient_color": "#F4E9D7",
+  "water": "#7B9FB8",
+  "parks": "#8FB88F",
+  "road_motorway": "#8B6914",
+  "road_primary": "#7B5D99",
+  "road_secondary": "#9B7EBD",
+  "road_tertiary": "#B8A088",
+  "road_residential": "#C4B5A0",
+  "road_default": "#B8A088"
+}

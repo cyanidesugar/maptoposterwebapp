@@ -1,0 +1,15 @@
+{
+  "name": "Cream & Mauve",
+  "description": "Sophisticated neutrals - warm cream with dusty mauve",
+  "bg": "#F0EBE3",
+  "text": "#5A524A",
+  "gradient_color": "#F0EBE3",
+  "water": "#B8C4D0",
+  "parks": "#D8D8C8",
+  "road_motorway": "#A88B8B",
+  "road_primary": "#B8A5A5",
+  "road_secondary": "#C8B8B0",
+  "road_tertiary": "#D0C4B8",
+  "road_residential": "#D8D0C8",
+  "road_default": "#D0C8C0"
+}

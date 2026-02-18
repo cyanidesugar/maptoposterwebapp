@@ -1,0 +1,6 @@
+# Additional requirements for STL generation (3D printing support)
+# Install with: pip install -r requirements_stl.txt
+
+trimesh>=4.0.0        # 3D mesh processing and STL export
+scipy>=1.10.0         # Scientific computing (for Gaussian smoothing)
+numpy>=1.24.0         # Arrays and numerical operations (usually already installed)

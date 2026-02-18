@@ -1,0 +1,15 @@
+{
+  "name": "Citrus Pop",
+  "description": "Bright and cheerful - cream background with vibrant citrus colors",
+  "bg": "#FFFEF7",
+  "text": "#2D3436",
+  "gradient_color": "#FFFEF7",
+  "water": "#74B9FF",
+  "parks": "#A8E6CF",
+  "road_motorway": "#FF7675",
+  "road_primary": "#FD79A8",
+  "road_secondary": "#FDCB6E",
+  "road_tertiary": "#55EFC4",
+  "road_residential": "#A29BFE",
+  "road_default": "#DFE6E9"
+}

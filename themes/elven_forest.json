@@ -1,0 +1,15 @@
+{
+  "name": "Elven Forest",
+  "description": "Ancient woodland realm - deep greens with silver and ethereal blue highlights",
+  "bg": "#2D3E2B",
+  "text": "#D4E4D4",
+  "gradient_color": "#2D3E2B",
+  "water": "#4A6B7C",
+  "parks": "#3D5C3D",
+  "road_motorway": "#C0C0C0",
+  "road_primary": "#8FBC8F",
+  "road_secondary": "#A4C9A4",
+  "road_tertiary": "#B8D8BA",
+  "road_residential": "#98B898",
+  "road_default": "#A4C9A4"
+}

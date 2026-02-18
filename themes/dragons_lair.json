@@ -1,0 +1,15 @@
+{
+  "name": "Dragon's Lair",
+  "description": "Volcanic realm - dark stone with flowing lava and ember accents",
+  "bg": "#1A1110",
+  "text": "#FFB84D",
+  "gradient_color": "#1A1110",
+  "water": "#2B1B1A",
+  "parks": "#2A1F1B",
+  "road_motorway": "#FF4500",
+  "road_primary": "#FF6347",
+  "road_secondary": "#FF8C42",
+  "road_tertiary": "#D4691E",
+  "road_residential": "#B8765C",
+  "road_default": "#D4691E"
+}

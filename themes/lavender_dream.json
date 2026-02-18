@@ -1,0 +1,15 @@
+{
+  "name": "Lavender Dream",
+  "description": "Soft purple vibes - light lavender with rose and periwinkle",
+  "bg": "#F8F4FF",
+  "text": "#4A3A5A",
+  "gradient_color": "#F8F4FF",
+  "water": "#A8D8EA",
+  "parks": "#D4E4BC",
+  "road_motorway": "#E55381",
+  "road_primary": "#B983FF",
+  "road_secondary": "#94B3FD",
+  "road_tertiary": "#C2A3D5",
+  "road_residential": "#D5AAFF",
+  "road_default": "#E0C9FF"
+}
