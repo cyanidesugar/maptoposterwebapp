@@ -47,7 +47,12 @@ class STLSettings:
 
 
 def _grid_dimensions(settings: STLSettings) -> tuple[int, int]:
-    """Calculate grid dimensions from settings, preserving physical aspect ratio."""
+    """Calculate grid dimensions from settings, preserving physical aspect ratio.
+
+    Returns:
+        (grid_width, grid_height) — width first, matching standard (x, y) convention.
+        Note: numpy arrays must still be shaped (grid_height, grid_width).
+    """
     physical_aspect = settings.width_mm / settings.height_mm
     if physical_aspect >= 1.0:
         grid_width = settings.resolution
@@ -55,7 +60,7 @@ def _grid_dimensions(settings: STLSettings) -> tuple[int, int]:
     else:
         grid_height = settings.resolution
         grid_width = int(settings.resolution * physical_aspect)
-    return grid_height, grid_width
+    return grid_width, grid_height
 
 
 def world_to_grid(
@@ -67,6 +72,12 @@ def world_to_grid(
     minx, miny, maxx, maxy = bounds
     width = maxx - minx
     height = maxy - miny
+
+    if width < 1e-10 or height < 1e-10:
+        raise ValueError(
+            "Map bounds are degenerate — cannot generate STL "
+            f"(width={width}, height={height})"
+        )
 
     grid_height, grid_width = grid_shape
 
@@ -124,7 +135,7 @@ def rasterize_roads(
     settings: STLSettings,
 ) -> np.ndarray:
     """Rasterize road network to heightmap grid."""
-    grid_height, grid_width = _grid_dimensions(settings)
+    grid_width, grid_height = _grid_dimensions(settings)
     grid = np.zeros((grid_height, grid_width), dtype=np.float32)
 
     logger.info("  Grid size: %dx%d pixels", grid_width, grid_height)
@@ -134,8 +145,14 @@ def rasterize_roads(
         if 'geometry' in data:
             coords = np.array(data['geometry'].coords)
         else:
-            u_pos = (graph.nodes[u]['x'], graph.nodes[u]['y'])
-            v_pos = (graph.nodes[v]['x'], graph.nodes[v]['y'])
+            try:
+                u_pos = (graph.nodes[u]['x'], graph.nodes[u]['y'])
+                v_pos = (graph.nodes[v]['x'], graph.nodes[v]['y'])
+            except KeyError:
+                logger.debug(
+                    "Skipping edge (%s, %s): node missing 'x'/'y' attribute", u, v
+                )
+                continue
             coords = np.array([u_pos, v_pos])
 
         highway = data.get('highway', 'unclassified')
@@ -163,7 +180,7 @@ def rasterize_polygons(
     height_value: float,
 ) -> np.ndarray:
     """Rasterize polygon features (water, parks) to grid."""
-    grid_height, grid_width = _grid_dimensions(settings)
+    grid_width, grid_height = _grid_dimensions(settings)
     grid = np.zeros((grid_height, grid_width), dtype=np.float32)
 
     if gdf is None or gdf.empty:
@@ -254,26 +271,36 @@ def heightmap_to_mesh(heightmap: np.ndarray, settings: STLSettings) -> trimesh.T
 
     side_meshes = []
 
-    # Build side walls
-    wall_configs = [
-        # (start_vertex_fn, face_winding)
-        # Front wall (row = 0)
-        (lambda col: col, lambda col: col + 1, np.array([[0, 2, 1], [1, 2, 3]])),
-        # Back wall (row = height-1)
-        (lambda col: (height - 1) * width + col,
-         lambda col: (height - 1) * width + (col + 1),
-         np.array([[0, 1, 2], [1, 3, 2]])),
-    ]
+    # Winding conventions (CCW, outward normals via right-hand rule):
+    #   OUTWARD_POS: normal points in +axis direction → [[0, 1, 2], [1, 3, 2]]
+    #   OUTWARD_NEG: normal points in -axis direction → [[0, 2, 1], [1, 2, 3]]
+    # Quad vertex layout: v0=top-start, v1=top-end, v2=base-start, v3=base-end
+    # Front wall (row=0, normal=-Y): along +X, need -Y → OUTWARD_NEG
+    # Back  wall (row=h-1, normal=+Y): along +X, need +Y → OUTWARD_POS
+    # Left  wall (col=0, normal=-X): along +Y, need -X → OUTWARD_POS
+    # Right wall (col=w-1, normal=+X): along +Y, need +X → OUTWARD_NEG
+    OUTWARD_POS = np.array([[0, 1, 2], [1, 3, 2]])
+    OUTWARD_NEG = np.array([[0, 2, 1], [1, 2, 3]])
 
-    for v0_fn, v1_fn, winding in wall_configs:
-        for col in range(width - 1):
-            v0_idx = v0_fn(col)
-            v1_idx = v1_fn(col)
-            wall_verts = np.array([
-                vertices[v0_idx], vertices[v1_idx],
-                base_vertices[v0_idx], base_vertices[v1_idx],
-            ])
-            side_meshes.append(trimesh.Trimesh(vertices=wall_verts, faces=winding))
+    # Front wall (row = 0)
+    for col in range(width - 1):
+        v0_idx = col
+        v1_idx = col + 1
+        wall_verts = np.array([
+            vertices[v0_idx], vertices[v1_idx],
+            base_vertices[v0_idx], base_vertices[v1_idx],
+        ])
+        side_meshes.append(trimesh.Trimesh(vertices=wall_verts, faces=OUTWARD_NEG))
+
+    # Back wall (row = height-1)
+    for col in range(width - 1):
+        v0_idx = (height - 1) * width + col
+        v1_idx = (height - 1) * width + (col + 1)
+        wall_verts = np.array([
+            vertices[v0_idx], vertices[v1_idx],
+            base_vertices[v0_idx], base_vertices[v1_idx],
+        ])
+        side_meshes.append(trimesh.Trimesh(vertices=wall_verts, faces=OUTWARD_POS))
 
     # Left wall (col = 0)
     for row in range(height - 1):
@@ -283,8 +310,7 @@ def heightmap_to_mesh(heightmap: np.ndarray, settings: STLSettings) -> trimesh.T
             vertices[v0_idx], vertices[v1_idx],
             base_vertices[v0_idx], base_vertices[v1_idx],
         ])
-        side_meshes.append(trimesh.Trimesh(
-            vertices=wall_verts, faces=np.array([[0, 1, 2], [1, 3, 2]])))
+        side_meshes.append(trimesh.Trimesh(vertices=wall_verts, faces=OUTWARD_POS))
 
     # Right wall (col = width-1)
     for row in range(height - 1):
@@ -294,8 +320,7 @@ def heightmap_to_mesh(heightmap: np.ndarray, settings: STLSettings) -> trimesh.T
             vertices[v0_idx], vertices[v1_idx],
             base_vertices[v0_idx], base_vertices[v1_idx],
         ])
-        side_meshes.append(trimesh.Trimesh(
-            vertices=wall_verts, faces=np.array([[0, 2, 1], [1, 2, 3]])))
+        side_meshes.append(trimesh.Trimesh(vertices=wall_verts, faces=OUTWARD_NEG))
 
     logger.info("  Combining %d mesh components...", 2 + len(side_meshes))
     all_meshes = [top_mesh, base_mesh] + side_meshes

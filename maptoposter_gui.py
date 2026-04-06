@@ -2,13 +2,15 @@ import customtkinter as ctk
 import subprocess
 import sys
 import threading
+import logging
 import os
 import json
 import re
 from pathlib import Path
 import matplotlib.font_manager as fm
 from tkinter import messagebox
-from datetime import datetime
+
+logger = logging.getLogger("maptoposter")
 
 # Standard Appearance Settings
 ctk.set_appearance_mode("Dark")
@@ -46,6 +48,14 @@ class ModernMapPosterGUI(ctk.CTk):
         self.themes = self._sync_themes()
         self._installed_fonts: list[str] | None = None
 
+        # Generation state
+        self._generating: bool = False
+        self._process: subprocess.Popen | None = None
+
+        # Original stdio (saved before any redirection in frozen mode)
+        self._original_stdout = sys.stdout
+        self._original_stderr = sys.stderr
+
         # Resolution Presets
         self.resolutions: dict[str, tuple[float, float]] = {
             "Poster (12x16)": (12, 16),
@@ -64,6 +74,9 @@ class ModernMapPosterGUI(ctk.CTk):
         self.bind("<Control-g>", lambda e: self.start_generation())
         self.bind("<Control-o>", lambda e: self.open_output_folder())
         self.bind("<Control-s>", lambda e: self.save_preset_dialog())
+
+        # Window close handler
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     @property
     def installed_fonts(self) -> list[str]:
@@ -94,7 +107,7 @@ class ModernMapPosterGUI(ctk.CTk):
             with open(self.settings_file, 'w') as f:
                 json.dump(self.settings, f, indent=2)
         except OSError as e:
-            print(f"Could not save settings: {e}")
+            logger.warning("Could not save settings: %s", e)
 
     def _apply_settings_to_form(self, data: dict) -> None:
         """Apply a settings dictionary (preset or last_used) to the GUI form."""
@@ -148,8 +161,8 @@ class ModernMapPosterGUI(ctk.CTk):
                     sw.select()
                 else:
                     sw.deselect()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Error applying settings to form: %s", e)
 
     def _collect_form_settings(self) -> dict:
         """Collect current form values into a settings dict."""
@@ -279,7 +292,8 @@ class ModernMapPosterGUI(ctk.CTk):
                     fonts.remove(font)
                     fonts.insert(0, font)
             return fonts
-        except Exception:
+        except Exception as e:
+            logger.warning("Error loading installed fonts: %s", e)
             return ["Arial", "Helvetica", "Times New Roman"]
 
     def _sync_themes(self) -> list[str]:
@@ -288,8 +302,8 @@ class ModernMapPosterGUI(ctk.CTk):
         if self.themes_dir.exists():
             try:
                 themes = sorted(f.stem for f in self.themes_dir.glob("*.json"))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Error scanning themes directory: %s", e)
 
         if not themes:
             themes = [
@@ -428,6 +442,7 @@ class ModernMapPosterGUI(ctk.CTk):
         )
         self.custom_text_size_sw.pack(side="right")
 
+        # Dynamic theme/font widgets created here and stored as self.<var_name> for later access
         # Font size entries
         for label, var_name, default in [
             ("City:", "city_font_size_var", "60"),
@@ -753,8 +768,11 @@ class ModernMapPosterGUI(ctk.CTk):
         if mode == "city":
             city = self.city_entry.get().strip()
             country = self.country_entry.get().strip()
-            if not city or not country:
-                messagebox.showwarning("Missing Input", "Please provide both City and Country.")
+            if not city:
+                messagebox.showwarning("Missing Input", "City name is required.")
+                return False
+            if not country:
+                messagebox.showwarning("Missing Input", "Country name is required.")
                 return False
         else:
             try:
@@ -771,7 +789,7 @@ class ModernMapPosterGUI(ctk.CTk):
                 return False
 
         try:
-            dist = int(self.dist_entry.get())
+            dist = int(float(self.dist_entry.get()))
             if dist < 1000 or dist > 50000:
                 messagebox.showwarning("Invalid Distance", "Distance must be between 1,000 and 50,000 meters.")
                 return False
@@ -844,16 +862,16 @@ class ModernMapPosterGUI(ctk.CTk):
         if self.custom_text_size_sw.get():
             try:
                 params["city_font_size"] = float(self.city_font_size_var.get())
-            except ValueError:
-                pass
+            except ValueError as e:
+                logger.debug("Invalid font size input, skipping: %s", e)
             try:
                 params["country_font_size"] = float(self.country_font_size_var.get())
-            except ValueError:
-                pass
+            except ValueError as e:
+                logger.debug("Invalid font size input, skipping: %s", e)
             try:
                 params["coords_font_size"] = float(self.coords_font_size_var.get())
-            except ValueError:
-                pass
+            except ValueError as e:
+                logger.debug("Invalid font size input, skipping: %s", e)
 
         # STL settings
         if self.format_menu.get() == "stl":
@@ -946,6 +964,8 @@ class ModernMapPosterGUI(ctk.CTk):
 
     def start_generation(self) -> None:
         """Start the poster generation process."""
+        if self._generating:
+            return
         if not self.validate_inputs():
             return
 
@@ -976,7 +996,11 @@ class ModernMapPosterGUI(ctk.CTk):
         self.log_box.insert("end", "\n" + "=" * 50 + "\n\n")
 
         self.save_last_used()
-        self.gen_btn.configure(state="disabled", text=" GENERATING...")
+        self._generating = True
+        self.gen_btn.configure(
+            fg_color="#e53e3e", hover_color="#c53030",
+            text=" CANCEL", command=self._cancel_generation
+        )
         self.progress.start()
 
         if getattr(sys, 'frozen', False):
@@ -986,6 +1010,41 @@ class ModernMapPosterGUI(ctk.CTk):
             # Script mode: subprocess for process isolation
             cmd = self._build_subprocess_cmd(params)
             threading.Thread(target=self._run_subprocess, args=(cmd,), daemon=True).start()
+
+    def _restore_stdio(self) -> None:
+        """Restore sys.stdout and sys.stderr to their original values."""
+        sys.stdout = self._original_stdout
+        sys.stderr = self._original_stderr
+
+    def _reset_gen_btn(self) -> None:
+        """Reset the generate button to its default state."""
+        self.gen_btn.configure(
+            state="normal",
+            fg_color="#10b981", hover_color="#059669",
+            text=" GENERATE (Ctrl+G)", command=self.start_generation
+        )
+
+    def _cancel_generation(self) -> None:
+        """Cancel the running generation process."""
+        self._generating = False
+        if self._process is not None and self._process.poll() is None:
+            self._process.terminate()
+        self.log_box.insert("end", "\n[CANCELLED] Generation cancelled by user.\n")
+        self.log_box.see("end")
+
+    def on_closing(self) -> None:
+        """Handle window close: terminate any running subprocess and restore stdio."""
+        if self._generating:
+            if not messagebox.askyesno(
+                "Generation in Progress",
+                "A poster is still being generated. Close anyway and cancel it?"
+            ):
+                return
+            self._generating = False
+            if self._process is not None and self._process.poll() is None:
+                self._process.terminate()
+        self._restore_stdio()
+        self.destroy()
 
     def _run_direct(self, params: dict) -> None:
         """Run poster generation directly via import (frozen EXE mode)."""
@@ -1104,8 +1163,9 @@ class ModernMapPosterGUI(ctk.CTk):
         finally:
             sys.stdout = original_stdout
             sys.stderr = original_stderr
+            self._generating = False
             self.after(0, self.progress.stop)
-            self.after(0, lambda: self.gen_btn.configure(state="normal", text="GENERATE (Ctrl+G)"))
+            self.after(0, self._reset_gen_btn)
 
     def _run_subprocess(self, cmd: list[str]) -> None:
         """Run the poster generation as a subprocess with real-time output streaming."""
@@ -1119,32 +1179,37 @@ class ModernMapPosterGUI(ctk.CTk):
                 errors="replace",
                 cwd=str(self.base_path),
             )
+            self._process = process
 
             ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
-            for line in process.stdout:
-                # Clean ANSI escape codes
-                clean_line = ansi_escape.sub('', line).rstrip()
-                if not clean_line:
-                    continue
+            try:
+                for line in process.stdout:
+                    # Clean ANSI escape codes
+                    clean_line = ansi_escape.sub('', line).rstrip()
+                    if not clean_line:
+                        continue
 
-                # Filter progress bar lines
-                progress_chars = clean_line.count('#') + clean_line.count('\u2588') + clean_line.count('\u25aa')
-                if progress_chars > 10:
-                    percent_match = re.search(r'(\d+)%', clean_line)
-                    if percent_match:
-                        percent = int(percent_match.group(1))
-                        if percent % 20 == 0 or percent == 100:
-                            label_match = re.search(r'^([^:]+):', clean_line)
-                            if label_match:
-                                self.after(0, lambda t=f"  {label_match.group(1)}: {percent}%":
-                                          self.log_box.insert("end", t + '\n'))
-                    continue
+                    # Filter progress bar lines
+                    progress_chars = clean_line.count('#') + clean_line.count('\u2588') + clean_line.count('\u25aa')
+                    if progress_chars > 10:
+                        percent_match = re.search(r'(\d+)%', clean_line)
+                        if percent_match:
+                            percent = int(percent_match.group(1))
+                            if percent % 20 == 0 or percent == 100:
+                                label_match = re.search(r'^([^:]+):', clean_line)
+                                if label_match:
+                                    self.after(0, lambda t=f"  {label_match.group(1)}: {percent}%":
+                                              self.log_box.insert("end", t + '\n'))
+                        continue
 
-                self.after(0, lambda t=clean_line: self.log_box.insert("end", t + '\n'))
-                self.after(0, lambda: self.log_box.see("end"))
+                    self.after(0, lambda t=clean_line: self.log_box.insert("end", t + '\n'))
+                    self.after(0, lambda: self.log_box.see("end"))
+            finally:
+                process.stdout.close()
+                process.wait()
 
-            return_code = process.wait()
+            return_code = process.returncode
 
             if return_code == 0:
                 self.after(0, lambda: self.log_box.insert("end", "\n[OK] SUCCESS!\n"))
@@ -1164,8 +1229,10 @@ class ModernMapPosterGUI(ctk.CTk):
             self.after(0, lambda msg=error_msg: messagebox.showerror("Error", f"Error: {msg}"))
 
         finally:
+            self._generating = False
+            self._process = None
             self.after(0, self.progress.stop)
-            self.after(0, lambda: self.gen_btn.configure(state="normal", text="GENERATE (Ctrl+G)"))
+            self.after(0, self._reset_gen_btn)
 
 
 if __name__ == "__main__":

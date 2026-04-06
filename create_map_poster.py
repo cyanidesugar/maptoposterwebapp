@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+City Map Poster Generator
+
+This module generates beautiful, minimalist map posters for any city in the world.
+It fetches OpenStreetMap data using OSMnx, applies customizable themes, and creates
+high-quality poster-ready images with roads, water features, and parks.
+"""
+
 import sys
 import io
 
@@ -12,13 +20,6 @@ if sys.platform == 'win32':
             sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
     except Exception:
         pass  # Already redirected or wrapped
-"""
-City Map Poster Generator
-
-This module generates beautiful, minimalist map posters for any city in the world.
-It fetches OpenStreetMap data using OSMnx, applies customizable themes, and creates
-high-quality poster-ready images with roads, water features, and parks.
-"""
 
 import argparse
 import asyncio
@@ -26,8 +27,9 @@ import hashlib
 import json
 import logging
 import os
-import sys
+import re
 import time
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, cast
@@ -69,7 +71,8 @@ import road_categories
 logger = logging.getLogger("maptoposter")
 _handler = logging.StreamHandler()
 _handler.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
-logger.addHandler(_handler)
+if not logger.handlers:
+    logger.addHandler(_handler)
 logger.setLevel(logging.INFO)
 
 # STL generation support (optional - will fail gracefully if not available)
@@ -100,7 +103,9 @@ THEMES_DIR = os.path.join(BASE_DIR, "themes")
 FONTS_DIR = os.path.join(BASE_DIR, "fonts")
 POSTERS_DIR = os.path.join(BASE_DIR, "posters")
 
-FONTS = load_fonts()
+# Geocoding constants
+_NOMINATIM_TIMEOUT = 10
+_NOMINATIM_RATE_LIMIT_DELAY = 1.0
 
 # --- Module-level caches ---
 _themes_cache: Optional[list[str]] = None
@@ -123,6 +128,7 @@ def cache_get(key: str) -> Any:
     Raises:
         CacheError: If cache read operation fails
     """
+    path = "(unknown)"
     try:
         path = _cache_path(key)
         if not os.path.exists(path):
@@ -137,7 +143,7 @@ def cache_get(key: str) -> Any:
             pass
         return None
     except Exception as e:
-        raise CacheError(f"Cache read failed: {e}") from e
+        raise CacheError(f"Cache read failed for {path}: {e}") from e
 
 
 def cache_set(key: str, value: Any) -> None:
@@ -183,8 +189,9 @@ def generate_output_filename(city: str, theme_name: str, output_format: str) -> 
     """Generate unique output filename with city, theme, and datetime."""
     os.makedirs(POSTERS_DIR, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    city_slug = city.lower().replace(" ", "_")
-    ext = output_format.lower()
+    city_normalized = unicodedata.normalize('NFKD', city).encode('ascii', 'ignore').decode('ascii')
+    city_slug = re.sub(r'[^\w]', '_', city_normalized.lower()).strip('_')
+    ext = re.sub(r'[^\w]', '', output_format.lower())[:10]
     filename = f"{city_slug}_{theme_name}_{timestamp}.{ext}"
     return os.path.join(POSTERS_DIR, filename)
 
@@ -203,6 +210,7 @@ def get_available_themes() -> list[str]:
     if not os.path.exists(THEMES_DIR):
         logger.warning("Themes directory not found, creating: %s", THEMES_DIR)
         os.makedirs(THEMES_DIR)
+        _themes_cache = []
         return []
 
     themes = []
@@ -241,7 +249,7 @@ def load_theme(theme_name: str = "terracotta") -> dict[str, str]:
             "road_default": "#D9A08A",
         }
 
-    with open(theme_file, "r") as f:
+    with open(theme_file, "r", encoding="utf-8") as f:
         theme = json.load(f)
         logger.info("Loaded theme: %s", theme.get('name', theme_name))
         if "description" in theme:
@@ -260,7 +268,11 @@ def create_gradient_fade(
     vals = np.linspace(0, 1, 256).reshape(-1, 1)
     gradient = np.hstack((vals, vals))
 
-    rgb = mcolors.to_rgb(color)
+    try:
+        rgb = mcolors.to_rgb(color)
+    except ValueError:
+        logger.warning("Invalid gradient color '%s', using white as fallback", color)
+        rgb = (1.0, 1.0, 1.0)
     my_colors = np.zeros((256, 4))
     my_colors[:, 0] = rgb[0]
     my_colors[:, 1] = rgb[1]
@@ -294,20 +306,17 @@ def create_gradient_fade(
     )
 
 
-def get_edge_colors_by_type(g: MultiDiGraph, theme: dict[str, str]) -> list[str]:
-    """Assigns colors to edges based on road type hierarchy using shared road_categories."""
-    return [
-        road_categories.get_color(data.get('highway', 'unclassified'), theme)
-        for _u, _v, data in g.edges(data=True)
-    ]
-
-
-def get_edge_widths_by_type(g: MultiDiGraph) -> list[float]:
-    """Assigns line widths to edges based on road type using shared road_categories."""
-    return [
-        road_categories.get_width(data.get('highway', 'unclassified'))
-        for _u, _v, data in g.edges(data=True)
-    ]
+def get_edge_colors_and_widths(
+    g: MultiDiGraph, theme: dict[str, str]
+) -> tuple[list[str], list[float]]:
+    """Assigns colors and widths to edges in a single pass over the graph."""
+    colors = []
+    widths = []
+    for _u, _v, data in g.edges(data=True):
+        hw = data.get('highway', 'unclassified')
+        colors.append(road_categories.get_color(hw, theme))
+        widths.append(road_categories.get_width(hw))
+    return colors, widths
 
 
 def get_coordinates(city: str, country: str) -> tuple[float, float]:
@@ -318,14 +327,21 @@ def get_coordinates(city: str, country: str) -> tuple[float, float]:
     cache_key = f"coords_{city.lower()}_{country.lower()}"
     cached = cache_get(cache_key)
     if cached:
-        logger.info("Using cached coordinates for %s, %s", city, country)
-        return tuple(cached)
+        if isinstance(cached, list) and len(cached) == 2:
+            try:
+                result = (float(cached[0]), float(cached[1]))
+                logger.info("Using cached coordinates for %s, %s", city, country)
+                return result
+            except (TypeError, ValueError):
+                pass
+        # Invalid cache entry, fall through to geocode
+        logger.debug("Cached coordinates for %s, %s were invalid, re-geocoding", city, country)
 
     logger.info("Looking up coordinates...")
-    geolocator = Nominatim(user_agent="city_map_poster", timeout=10)
+    geolocator = Nominatim(user_agent="city_map_poster", timeout=_NOMINATIM_TIMEOUT)
 
     # Add a small delay to respect Nominatim's usage policy
-    time.sleep(1)
+    time.sleep(_NOMINATIM_RATE_LIMIT_DELAY)
 
     try:
         location = geolocator.geocode(f"{city}, {country}")
@@ -390,6 +406,8 @@ def get_crop_limits(
     center_x, center_y = center.x, center.y
 
     fig_width, fig_height = fig.get_size_inches()
+    if fig_height == 0:
+        raise ValueError("Figure height cannot be zero")
     aspect = fig_width / fig_height
 
     half_x = dist
@@ -420,12 +438,10 @@ def fetch_graph(
         network_type: OSMnx network type ('drive', 'walk', 'bike', or 'all')
     """
     try:
-        g = ox.graph_from_point(
+        return ox.graph_from_point(
             point, dist=dist, dist_type='bbox',
             network_type=network_type, truncate_by_edge=True,
         )
-        time.sleep(0.5)
-        return g
     except Exception as e:
         logger.error("OSMnx error while fetching graph: %s", e)
         return None
@@ -439,14 +455,10 @@ def fetch_features(
 ) -> Optional[GeoDataFrame]:
     """
     Fetch geographic features (water, parks, etc.) from OpenStreetMap.
+    Note: GeoDataFrames are not JSON-serializable, so we rely on OSMnx caching.
     """
-    lat, lon = point
-
-    # Note: GeoDataFrames are not JSON-serializable, so we rely on OSMnx caching.
     try:
-        data = ox.features_from_point(point, tags=tags, dist=dist)
-        time.sleep(0.3)
-        return data
+        return ox.features_from_point(point, tags=tags, dist=dist)
     except Exception as e:
         logger.error("OSMnx error while fetching %s: %s", name, e)
         return None
@@ -456,7 +468,12 @@ def organize_svg_layers(svg_path: str) -> None:
     """
     Post-process SVG to organize road lines into layers by width.
     """
-    tree = ET.parse(svg_path)
+    try:
+        import defusedxml.ElementTree as safe_ET
+        tree = safe_ET.parse(svg_path)
+    except ImportError:
+        # Fallback: use standard ET (XXE risk only applies to untrusted SVGs)
+        tree = ET.parse(svg_path)
     root = tree.getroot()
 
     ns = {'svg': 'http://www.w3.org/2000/svg'}
@@ -488,27 +505,34 @@ def organize_svg_layers(svg_path: str) -> None:
                         else:
                             layers['residential']['paths'].append(path)
                     except (ValueError, IndexError):
-                        pass
+                        logger.debug("Could not parse stroke-width from style: %s", style)
 
     g_elements = root.findall('.//svg:g', ns)
     if g_elements:
-        parent = root
-        insert_index = list(parent).index(g_elements[0])
+        insert_parent = root
+        insert_index = list(insert_parent).index(g_elements[0])
 
-        for layer_key in ['residential', 'tertiary', 'secondary', 'primary', 'motorway']:
+        # Build parent map once instead of scanning the tree per path (O(n) vs O(n²))
+        parent_map = {}
+        for elem in root.iter():
+            for child in elem:
+                parent_map[child] = elem
+
+        draw_order = ['residential', 'tertiary', 'secondary', 'primary', 'motorway']
+        ordered_keys = [k for k in draw_order if k in layers]
+        for layer_key in ordered_keys:
             layer = layers[layer_key]
             if layer['paths']:
                 layer_group = ET.Element('{http://www.w3.org/2000/svg}g')
                 layer_group.set('id', f"layer_{layer_key}_{layer['name']}_width_{layer['width']}")
 
                 for path in layer['paths']:
-                    for elem in root.iter():
-                        if path in list(elem):
-                            elem.remove(path)
-                            break
+                    path_parent = parent_map.get(path)
+                    if path_parent is not None:
+                        path_parent.remove(path)
                     layer_group.append(path)
 
-                parent.insert(insert_index, layer_group)
+                insert_parent.insert(insert_index, layer_group)
 
     tree.write(svg_path, encoding='utf-8', xml_declaration=True)
     logger.info("SVG layers organized in %s", svg_path)
@@ -528,7 +552,8 @@ def _project_features(
         return None
     try:
         return ox.projection.project_gdf(polys)
-    except Exception:
+    except Exception as e:
+        logger.warning("CRS projection failed, using original geometry: %s", e)
         return polys.to_crs(g_proj.graph['crs'])
 
 
@@ -558,8 +583,7 @@ def _render_roads(
     theme: dict[str, str],
 ) -> None:
     """Render road network on the map axes."""
-    edge_colors = get_edge_colors_by_type(g_proj, theme)
-    edge_widths = get_edge_widths_by_type(g_proj)
+    edge_colors, edge_widths = get_edge_colors_and_widths(g_proj, theme)
     ox.plot_graph(
         g_proj, ax=ax, bgcolor=theme['bg'],
         node_size=0,
@@ -685,6 +709,7 @@ def create_poster(
     font_family: str = "sans-serif",
     theme: Optional[dict[str, str]] = None,
     network_type: str = "all",
+    dpi: int = 300,
 ) -> None:
     """
     Generate a complete map poster with roads, water, parks, and typography.
@@ -721,8 +746,22 @@ def create_poster(
     if theme is None:
         raise ValueError("Theme must be provided to create_poster()")
 
-    display_city = display_city or country_label or city
-    display_country = display_country or country
+    required_keys = {'bg', 'water', 'parks', 'text', 'gradient_color'}
+    missing = required_keys - set(theme.keys())
+    if missing:
+        logger.warning("Theme is missing keys: %s — using defaults", missing)
+        defaults = {
+            'bg': '#FFFFFF',
+            'water': '#A8C8E0',
+            'parks': '#C8D8C0',
+            'text': '#000000',
+            'gradient_color': '#FFFFFF',
+        }
+        for k in missing:
+            theme[k] = defaults[k]
+
+    display_city = display_city or city
+    display_country = display_country or country_label or country
 
     logger.info("Generating map for %s, %s...", city, country)
 
@@ -741,19 +780,23 @@ def create_poster(
         pbar.update(1)
 
         pbar.set_description("Downloading water features")
-        water = fetch_features(
-            point, compensated_dist,
-            tags={"natural": "water", "waterway": "riverbank"},
-            name="water",
-        )
+        water = None
+        if not no_water:
+            water = fetch_features(
+                point, compensated_dist,
+                tags={"natural": "water", "waterway": "riverbank"},
+                name="water",
+            )
         pbar.update(1)
 
         pbar.set_description("Downloading parks/green spaces")
-        parks = fetch_features(
-            point, compensated_dist,
-            tags={"leisure": "park", "landuse": "grass"},
-            name="parks",
-        )
+        parks = None
+        if not no_parks:
+            parks = fetch_features(
+                point, compensated_dist,
+                tags={"leisure": "park", "landuse": "grass"},
+                name="parks",
+            )
         pbar.update(1)
 
     logger.info("All data retrieved successfully!")
@@ -821,8 +864,8 @@ def create_poster(
 
         generate_stl(
             g_proj,
-            water_polys if water_polys is not None else None,
-            parks_polys if parks_polys is not None else None,
+            water_polys,
+            parks_polys,
             bounds, output_file, stl_settings,
         )
     else:
@@ -832,7 +875,7 @@ def create_poster(
             pad_inches=0.05,
         )
         if fmt == "png":
-            save_kwargs["dpi"] = 300
+            save_kwargs["dpi"] = dpi
 
         plt.savefig(output_file, format=fmt, **save_kwargs)
         plt.close()
@@ -1058,8 +1101,12 @@ Examples:
 
     try:
         if args.latitude and args.longitude:
-            lat = parse(args.latitude)
-            lon = parse(args.longitude)
+            try:
+                lat = float(parse(args.latitude))
+                lon = float(parse(args.longitude))
+            except Exception as e:
+                logger.error("Invalid latitude/longitude format: %s", e)
+                sys.exit(1)
             validate_coordinates(lat, lon)
             coords = (lat, lon)
             logger.info("Coordinates: %s, %s", lat, lon)
@@ -1100,6 +1147,7 @@ Examples:
                 args.format,
                 args.width,
                 args.height,
+                country_label=args.country_label,
                 display_city=args.display_city,
                 display_country=args.display_country,
                 fonts=custom_fonts,
@@ -1115,12 +1163,16 @@ Examples:
                 font_family=font_family,
                 theme=current_theme,
                 network_type=args.network_type,
+                dpi=args.dpi,
             )
 
         print("\n" + "=" * 50)
         print("[OK] Poster generation complete!")
         print("=" * 50)
 
+    except KeyboardInterrupt:
+        logger.info("Cancelled by user.")
+        sys.exit(0)
     except Exception as e:
         logger.error("Error: %s", e)
         if args.verbose:
