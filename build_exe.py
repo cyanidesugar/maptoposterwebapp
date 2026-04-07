@@ -15,6 +15,15 @@ def build_exe():
     print("Building MapToPoster EXE...")
     print()
 
+    # Locate customtkinter package (must be installed in the active environment)
+    try:
+        import customtkinter
+        ctk_path = os.path.dirname(customtkinter.__file__)
+        print(f"  Found customtkinter at: {ctk_path}")
+    except ImportError:
+        print("ERROR: customtkinter is not installed. Run: uv pip install customtkinter")
+        return
+
     # Clean previous builds
     for folder in ['build', 'dist']:
         if os.path.exists(folder):
@@ -61,7 +70,6 @@ def build_exe():
         '--hidden-import=tqdm',
         '--hidden-import=geopy',
         '--hidden-import=shapely',
-        '--hidden-import=customtkinter',
 
         # Exclude unnecessary modules
         '--exclude-module=pytest',
@@ -71,6 +79,10 @@ def build_exe():
         '--clean',
         '--noconfirm',
     ]
+
+    # Bundle customtkinter assets (theme JSON files, images, etc.)
+    args.append(f'--add-data={ctk_path};customtkinter')
+    print(f"  Adding customtkinter from: {ctk_path}")
 
     if os.path.exists('icon.ico'):
         args.append('--icon=icon.ico')
