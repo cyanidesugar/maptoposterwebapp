@@ -35,6 +35,11 @@ from pathlib import Path
 from typing import Any, Optional, cast
 import xml.etree.ElementTree as ET
 
+# Ensure matplotlib export backends are bundled by PyInstaller static analysis
+import matplotlib.backends.backend_svg  # noqa: F401
+import matplotlib.backends.backend_pdf  # noqa: F401
+import matplotlib.backends.backend_agg  # noqa: F401
+
 # Workaround for PyInstaller: Mock package metadata if not available
 if getattr(sys, 'frozen', False):
     # Running as exe - mock metadata to prevent errors
