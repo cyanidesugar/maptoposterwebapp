@@ -46,6 +46,7 @@ class ModernMapPosterGUI(ctk.CTk):
 
         # Load themes and fonts (cached)
         self.themes = self._sync_themes()
+        self.theme_descriptions = self._load_theme_descriptions()
         self._installed_fonts: list[str] | None = None
 
         # Generation state
@@ -112,7 +113,9 @@ class ModernMapPosterGUI(ctk.CTk):
     def _apply_settings_to_form(self, data: dict) -> None:
         """Apply a settings dictionary (preset or last_used) to the GUI form."""
         try:
-            self.theme_menu.set(data.get("theme", "feature_based"))
+            theme = data.get("theme", "feature_based")
+            self.theme_menu.set(theme)
+            self._on_theme_change(theme)
             self.font_menu.set(data.get("font", "Arial"))
             self.city_font_size_var.set(data.get("city_font_size", "60"))
             self.country_font_size_var.set(data.get("country_font_size", "30"))
@@ -314,8 +317,35 @@ class ModernMapPosterGUI(ctk.CTk):
             ]
         return themes
 
+    def _load_theme_descriptions(self) -> dict[str, str]:
+        """Load description field from each theme JSON."""
+        descriptions: dict[str, str] = {}
+        if not self.themes_dir.exists():
+            return descriptions
+        for path in self.themes_dir.glob("*.json"):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+                desc = data.get("description", "")
+                if desc:
+                    descriptions[path.stem] = desc
+            except Exception:
+                pass
+        return descriptions
+
+    def _on_theme_change(self, theme: str) -> None:
+        """Update description label when theme selection changes."""
+        desc = self.theme_descriptions.get(theme, "")
+        self.theme_desc_label.configure(text=desc)
+
     def check_script_exists(self) -> None:
-        """Verify the main script exists."""
+        """Verify the main script exists (only relevant in script/dev mode).
+
+        When running as a frozen EXE, create_map_poster is a bundled module
+        and no .py file is needed — skip the check entirely.
+        """
+        if getattr(sys, 'frozen', False):
+            return  # Bundled EXE uses direct import; no .py file required
         if not self.script_path.exists():
             messagebox.showwarning(
                 "Script Not Found",
@@ -415,11 +445,19 @@ class ModernMapPosterGUI(ctk.CTk):
         )
         self.fav_btn.pack(side="right")
 
-        self.theme_menu = ctk.CTkOptionMenu(col2, values=self.themes, width=200)
-        self.theme_menu.pack(fill="x", padx=15, pady=(0, 12))
+        self.theme_menu = ctk.CTkOptionMenu(col2, values=self.themes, width=200,
+                                             command=self._on_theme_change)
+        self.theme_menu.pack(fill="x", padx=15, pady=(0, 4))
         if self.themes:
             self.theme_menu.set(self.themes[0])
         self.update_theme_menu()
+
+        self.theme_desc_label = ctk.CTkLabel(
+            col2, text="", anchor="w", wraplength=200,
+            font=ctk.CTkFont(size=11), text_color="gray60"
+        )
+        self.theme_desc_label.pack(fill="x", padx=15, pady=(0, 8))
+        self._on_theme_change(self.theme_menu.get())
 
         ctk.CTkLabel(col2, text="Font:", anchor="w").pack(fill="x", padx=15, pady=(0, 5))
         self.font_menu = ctk.CTkComboBox(col2, values=self.installed_fonts, width=200)

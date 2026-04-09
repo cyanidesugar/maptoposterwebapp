@@ -5,7 +5,7 @@ a = Analysis(
     ['maptoposter_gui.py'],
     pathex=[],
     binaries=[],
-    datas=[('G:\\Other computers\\Big PC\\3D Stuff\\01 Coding STuff\\Map Studio New\\.venv\\Lib\\site-packages\\customtkinter', 'customtkinter'), ('themes', 'themes'), ('fonts', 'fonts')],
+    datas=[('E:\\3D Stuff\\01 Coding STuff\\Map Studio New\\.venv\\Lib\\site-packages\\customtkinter', 'customtkinter'), ('themes', 'themes'), ('fonts', 'fonts')],
     hiddenimports=['create_map_poster', 'road_categories', 'font_management', 'stl_generator', 'lat_lon_parser', 'osmnx', 'geopandas', 'trimesh', 'scipy', 'matplotlib', 'numpy', 'tqdm', 'geopy', 'shapely'],
     hookspath=[],
     hooksconfig={},

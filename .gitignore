@@ -14,8 +14,12 @@ venv/
 *.egg-info/
 dist/
 build/
+build */
 MapToPoster_Distribution/
 MapToPoster_Distribution.zip
+MapToPoster_release/
+MapToPoster_release.zip
+MapToPoster.exe
 *.pyc
 __pycache__/
 

@@ -28,7 +28,11 @@ def build_exe():
     for folder in ['build', 'dist']:
         if os.path.exists(folder):
             print(f"Cleaning old {folder} folder...")
-            shutil.rmtree(folder)
+            try:
+                shutil.rmtree(folder)
+            except PermissionError as e:
+                # EXE may still be running; PyInstaller will overwrite it
+                print(f"  Warning: could not fully clean {folder}/ ({e}) — continuing anyway")
 
     if not os.path.exists('maptoposter_gui.py'):
         print("Error: maptoposter_gui.py not found!")
@@ -76,7 +80,6 @@ def build_exe():
         '--exclude-module=IPython',
         '--exclude-module=notebook',
 
-        '--clean',
         '--noconfirm',
     ]
 
