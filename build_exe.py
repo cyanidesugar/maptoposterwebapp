@@ -67,7 +67,7 @@ def build_exe():
         # Dependencies
         '--hidden-import=osmnx',
         '--hidden-import=geopandas',
-        '--hidden-import=trimesh',
+        '--collect-all=trimesh',
         '--hidden-import=scipy',
         '--hidden-import=matplotlib',
         '--hidden-import=matplotlib.backends.backend_svg',
