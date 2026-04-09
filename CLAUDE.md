@@ -26,9 +26,8 @@ pytest test_mapstudio.py::TestLatLonParse -v
 
 **Entry points:**
 - `create_map_poster.py` — CLI + core rendering engine. `create_poster()` is the main function.
-- `maptoposter_gui.py` — CustomTkinter desktop GUI. Calls the engine via **subprocess** (non-blocking, with threaded output capture).
-- `streamlit_app.py` — Web interface alternative.
-- `stl_generator.py` — Converts a generated map into a 3D-printable STL relief.
+- `maptoposter_gui.py` — CustomTkinter desktop GUI. When frozen, calls `_run_direct()` which imports `create_poster()` directly (no subprocess). In script mode, uses subprocess.
+- `stl_generator.py` — Converts a generated map into a 3D-printable STL relief. Confirmed working (watertight mesh).
 
 **Shared modules:**
 - `road_categories.py` — OSM highway tag → road tier classification. Used by both the engine and STL generator.
@@ -47,12 +46,22 @@ pytest test_mapstudio.py::TestLatLonParse -v
 
 **GUI settings** persist to `gui_settings.json` (recent cities, presets, favorites, last-used form values).
 
-**EXE packaging:** `build_exe.py` uses PyInstaller with hidden imports for all geospatial libs and bundles `themes/`, `fonts/`, and the `customtkinter` asset tree. The `MapToPoster.spec` file is the generated spec. **Always run via `.venv/Scripts/python.exe build_exe.py`** — using any other Python (e.g. a uv temp env) causes Shapely DLL path mismatches that break the EXE at runtime.
+**EXE packaging:** `build_exe.py` uses PyInstaller and bundles `themes/`, `fonts/`, and the `customtkinter` asset tree. **Always run via `.venv/Scripts/python.exe build_exe.py`** — using any other Python causes Shapely DLL path mismatches. Output: `dist/MapToPoster.exe` (~114 MB).
+
+**Distribution:** zip `dist/MapToPoster.exe` + `themes/` folder → `MapToPoster_release.zip`. The EXE reads themes from `<exe_dir>/themes/` at runtime (not from the PyInstaller temp dir), so themes must ship alongside the EXE.
+
+**PyInstaller gotchas (hard-won):**
+- `--clean` flag causes `PermissionError` on `build/MapToPoster/localpycs` — removed from build args.
+- `customtkinter` requires `--add-data` (assets not found via hidden import alone).
+- `trimesh` requires `--collect-all=trimesh` (not just `--hidden-import`).
+- matplotlib's PyInstaller hook overrides `--hidden-import` for backends and only bundles `Agg`. Fix: explicitly import `matplotlib.backends.backend_svg/pdf/agg` at the top of `create_map_poster.py` so static analysis picks them up before the hook runs. `--collect-submodules=matplotlib.backends` is also set as a fallback.
 
 ## Key constraints
 
 - NetworkX graphs are **not** cached (not JSON-serializable) — OSMnx's internal cache handles network data.
 - `create_poster()` receives `theme` as an explicit dict parameter — no global theme state.
 - Feature toggles (`no_roads`, `no_water`, `no_parks`) are explicit bool params, not globals.
-- The GUI never calls engine functions directly — always via `subprocess` to keep the GUI responsive.
+- In frozen EXE mode the GUI calls `_run_direct()` (direct import), not subprocess.
 - Tests in `test_mapstudio.py` cover only pure functions (no network calls, no GUI, no OSM downloads).
+- Default GitHub branch is `Desktop` (there is no `main`). Releases are published to `cyanidesugar/maptoposterwebapp`.
+- `pip` is not in the venv (created by uv). To install packages: bootstrap with `python.exe -m ensurepip` then `python.exe -m pip install <pkg>`.
