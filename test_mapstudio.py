@@ -403,7 +403,7 @@ class TestFontFamilySanitisation:
         mock_response.raise_for_status.return_value = None
         mock_response.text = ""  # No @font-face blocks → no files downloaded.
         with mock.patch("font_management.requests.get", return_value=mock_response):
-            result = fm.download_google_font("../../../evil")
+            fm.download_google_font("../../../evil")
 
         # The function returns None or a dict; either way no traversal file
         # should have been created anywhere above tmp_path.

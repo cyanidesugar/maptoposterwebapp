@@ -32,7 +32,7 @@ import time
 import unicodedata
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, Optional
 import xml.etree.ElementTree as ET
 
 # Ensure matplotlib export backends are bundled by PyInstaller static analysis
@@ -619,7 +619,6 @@ def _render_text(
     BASE_SUB = country_font_size if country_font_size is not None else 30
     BASE_COORDS = coords_font_size if coords_font_size is not None else 22
 
-    font_main = FontProperties(family=font_family, weight="bold", size=BASE_MAIN * scale_factor)
     font_sub = FontProperties(family=font_family, weight="normal", size=BASE_SUB * scale_factor)
     font_coords = FontProperties(family=font_family, weight="normal", size=BASE_COORDS * scale_factor)
 

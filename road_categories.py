@@ -6,7 +6,7 @@ Used by both create_map_poster.py and stl_generator.py.
 """
 
 import logging
-from typing import Optional
+
 
 logger = logging.getLogger(__name__)
 
