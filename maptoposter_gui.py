@@ -161,6 +161,8 @@ class ModernMapPosterGUI(ctk.CTk):
                 (self.park_sw, "parks", True),
                 (self.sea_sw, "show_sea", False),
                 (self.wetlands_sw, "show_wetlands", False),
+                (self.religious_sw, "show_religious", False),
+                (self.historic_sw, "show_historic", False),
             ]:
                 if data.get(key, default):
                     sw.select()
@@ -196,6 +198,8 @@ class ModernMapPosterGUI(ctk.CTk):
             "parks": self.park_sw.get(),
             "show_sea": self.sea_sw.get(),
             "show_wetlands": self.wetlands_sw.get(),
+            "show_religious": self.religious_sw.get(),
+            "show_historic": self.historic_sw.get(),
         }
 
     def add_recent_city(self, city: str, country: str) -> None:
@@ -713,6 +717,12 @@ class ModernMapPosterGUI(ctk.CTk):
         self.wetlands_sw = ctk.CTkSwitch(toggle_frame, text=" Wetlands")
         self.wetlands_sw.pack(anchor="w", padx=10, pady=8)
 
+        self.religious_sw = ctk.CTkSwitch(toggle_frame, text=" Religious sites")
+        self.religious_sw.pack(anchor="w", padx=10, pady=8)
+
+        self.historic_sw = ctk.CTkSwitch(toggle_frame, text=" Historical sites")
+        self.historic_sw.pack(anchor="w", padx=10, pady=8)
+
         # Batch generation toggle
         self.all_themes_sw = ctk.CTkSwitch(toggle_frame, text=" All Themes")
         self.all_themes_sw.pack(anchor="w", padx=10, pady=8)
@@ -947,6 +957,8 @@ class ModernMapPosterGUI(ctk.CTk):
         params["no_parks"] = not self.park_sw.get()
         params["show_sea"] = bool(self.sea_sw.get())
         params["show_wetlands"] = bool(self.wetlands_sw.get())
+        params["show_religious"] = bool(self.religious_sw.get())
+        params["show_historic"] = bool(self.historic_sw.get())
 
         return params
 
@@ -1013,6 +1025,10 @@ class ModernMapPosterGUI(ctk.CTk):
             cmd.append("--show-sea")
         if params.get("show_wetlands"):
             cmd.append("--show-wetlands")
+        if params.get("show_religious"):
+            cmd.append("--show-religious")
+        if params.get("show_historic"):
+            cmd.append("--show-historic")
 
         return cmd
 
@@ -1203,6 +1219,8 @@ class ModernMapPosterGUI(ctk.CTk):
                     no_parks=params.get("no_parks", False),
                     show_sea=params.get("show_sea", False),
                     show_wetlands=params.get("show_wetlands", False),
+                    show_religious=params.get("show_religious", False),
+                    show_historic=params.get("show_historic", False),
                     font_family=font_family,
                     theme=current_theme,
                     network_type=params.get("network_type", "all"),

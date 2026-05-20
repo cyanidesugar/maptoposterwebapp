@@ -545,6 +545,76 @@ def _fetch_wetlands(
         return None
 
 
+def _fetch_religious(
+    point: tuple[float, float],
+    dist: float,
+) -> Optional[GeoDataFrame]:
+    """
+    Fetch OSM religious-building polygons around a point.
+
+    Queries both the structural ``building=*`` tag (for churches, cathedrals,
+    chapels, mosques, synagogues, temples, monasteries, shrines) and the
+    functional ``amenity=place_of_worship`` tag, which OSMnx OR's into a
+    single query.
+
+    Returns None on any error; the caller renders without religious sites in
+    that case, so this is logged at warning rather than error level. Returns
+    None silently (debug log) when no religious buildings exist in the
+    queried area.
+
+    Args:
+        point: (latitude, longitude) tuple for center point
+        dist: Distance in meters from center point
+    """
+    try:
+        return ox.features_from_point(
+            point,
+            tags={
+                "building": [
+                    "church", "cathedral", "chapel", "mosque", "synagogue",
+                    "temple", "monastery", "shrine",
+                ],
+                "amenity": "place_of_worship",
+            },
+            dist=dist,
+        )
+    except InsufficientResponseError:
+        logger.debug("No religious buildings found in the requested area")
+        return None
+    except Exception as e:
+        logger.warning("OSMnx error while fetching religious buildings: %s", e)
+        return None
+
+
+def _fetch_historic(
+    point: tuple[float, float],
+    dist: float,
+) -> Optional[GeoDataFrame]:
+    """
+    Fetch OSM ``historic=*`` features (any value) around a point.
+
+    The result may include points (statues, memorials without footprints),
+    lines, and polygons; the render step filters to Polygon/MultiPolygon.
+
+    Returns None on any error; logged at warning level (debug for the
+    expected ``InsufficientResponseError`` no-features case).
+
+    Args:
+        point: (latitude, longitude) tuple for center point
+        dist: Distance in meters from center point
+    """
+    try:
+        return ox.features_from_point(
+            point, tags={"historic": True}, dist=dist,
+        )
+    except InsufficientResponseError:
+        logger.debug("No historic features found in the requested area")
+        return None
+    except Exception as e:
+        logger.warning("OSMnx error while fetching historic features: %s", e)
+        return None
+
+
 def organize_svg_layers(svg_path: str) -> None:
     """
     Post-process SVG to organize road lines into layers by width.
@@ -796,6 +866,29 @@ def _render_wetlands(
         wetlands_polys.plot(ax=ax, facecolor=theme['water'], edgecolor='none', zorder=0.6)
 
 
+def _render_landmarks(
+    ax: plt.Axes,
+    religious_polys: Optional[GeoDataFrame],
+    historic_polys: Optional[GeoDataFrame],
+    theme: dict[str, str],
+) -> None:
+    """Render religious and historic building polygons on the map axes.
+
+    Both GDFs are painted into the same ``zorder=1.5`` slot using the theme's
+    ``landmark`` colour (falls back to ``text``, then ``#444444`` for themes
+    that don't define ``landmark``). Roads at ``zorder=2`` paint on top, so
+    building footprints sit behind the road network.
+
+    The caller has already passed each GDF through ``_project_features``,
+    which both filters to Polygon/MultiPolygon and projects to the graph CRS.
+    """
+    color = theme.get('landmark', theme.get('text', '#444444'))
+    if religious_polys is not None and not religious_polys.empty:
+        religious_polys.plot(ax=ax, facecolor=color, edgecolor='none', zorder=1.5)
+    if historic_polys is not None and not historic_polys.empty:
+        historic_polys.plot(ax=ax, facecolor=color, edgecolor='none', zorder=1.5)
+
+
 def _render_parks(
     ax: plt.Axes,
     parks_polys: Optional[GeoDataFrame],
@@ -936,6 +1029,8 @@ def create_poster(
     no_parks: bool = False,
     show_sea: bool = False,
     show_wetlands: bool = False,
+    show_religious: bool = False,
+    show_historic: bool = False,
     font_family: str = "sans-serif",
     theme: Optional[dict[str, str]] = None,
     network_type: str = "all",
@@ -970,6 +1065,12 @@ def create_poster(
             (off by default; ignored when no_water is True)
         show_wetlands: If True, render OSM ``natural=wetland`` polygons using
             the theme's water colour (off by default; ignored when no_water is True)
+        show_religious: If True, render OSM places of worship (churches,
+            mosques, synagogues, temples, monasteries, shrines, etc.) using
+            the theme's ``landmark`` colour (off by default)
+        show_historic: If True, render OSM ``historic=*`` polygons (castles,
+            palaces, ruins, monuments with footprints, archaeological sites,
+            etc.) using the theme's ``landmark`` colour (off by default)
         font_family: Font family name for text rendering
         theme: Theme dictionary (required)
         network_type: OSMnx network type ('drive', 'walk', 'bike', or 'all')
@@ -1001,7 +1102,11 @@ def create_poster(
 
     # Progress bar for data fetching
     fetch_wetlands = show_wetlands and not no_water
-    total_steps = 3 + (1 if fetch_wetlands else 0)
+    total_steps = 3 + (
+        (1 if fetch_wetlands else 0)
+        + (1 if show_religious else 0)
+        + (1 if show_historic else 0)
+    )
     with tqdm(
         total=total_steps,
         desc="Fetching map data",
@@ -1041,6 +1146,18 @@ def create_poster(
             wetlands = _fetch_wetlands(point, compensated_dist)
             pbar.update(1)
 
+        religious = None
+        if show_religious:
+            pbar.set_description("Downloading religious sites")
+            religious = _fetch_religious(point, compensated_dist)
+            pbar.update(1)
+
+        historic = None
+        if show_historic:
+            pbar.set_description("Downloading historic features")
+            historic = _fetch_historic(point, compensated_dist)
+            pbar.update(1)
+
     logger.info("All data retrieved successfully!")
 
     # Setup Plot
@@ -1051,10 +1168,12 @@ def create_poster(
 
     g_proj = ox.project_graph(g)
 
-    # Project features (water/parks/wetlands) to graph CRS
+    # Project features (water/parks/wetlands/landmarks) to graph CRS
     water_polys = _project_features(water, g_proj)
     parks_polys = _project_features(parks, g_proj)
     wetlands_polys = _project_features(wetlands, g_proj)
+    religious_polys = _project_features(religious, g_proj)
+    historic_polys = _project_features(historic, g_proj)
 
     # Determine cropping limits BEFORE rendering so we can build the sea bbox
     crop_xlim, crop_ylim = get_crop_limits(g_proj, point, fig, compensated_dist)
@@ -1081,6 +1200,9 @@ def create_poster(
 
     if not no_parks:
         _render_parks(ax, parks_polys, theme)
+
+    if show_religious or show_historic:
+        _render_landmarks(ax, religious_polys, historic_polys, theme)
 
     if not no_roads:
         logger.info("Applying road hierarchy colors...")
@@ -1311,6 +1433,10 @@ Examples:
                        help='Render open sea/ocean for coastal locations (off by default)')
     parser.add_argument('--show-wetlands', action='store_true',
                        help='Render OSM wetland polygons as water (off by default)')
+    parser.add_argument('--show-religious', action='store_true',
+                       help='Render churches, mosques, synagogues, temples, and other places of worship (off by default)')
+    parser.add_argument('--show-historic', action='store_true',
+                       help='Render castles, palaces, monuments, ruins, and other historic features (off by default)')
     parser.add_argument('--verbose', '-v', action='store_true',
                        help='Enable debug logging')
 
@@ -1426,6 +1552,8 @@ Examples:
                 no_parks=args.no_parks,
                 show_sea=args.show_sea,
                 show_wetlands=args.show_wetlands,
+                show_religious=args.show_religious,
+                show_historic=args.show_historic,
                 font_family=font_family,
                 theme=current_theme,
                 network_type=args.network_type,
