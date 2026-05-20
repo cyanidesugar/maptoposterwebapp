@@ -629,21 +629,32 @@ def _project_features(
 
 
 def _polygon_is_sea(polygon: Any, coastlines: list) -> bool:
-    """Determine whether a polygon lies on the sea side of any bounding coastline.
+    """Determine whether a polygon lies on the sea side of its bounding coastlines.
 
     OSM convention: when walking a coastline way in its native direction,
     land is on the LEFT and sea is on the RIGHT. For each coastline segment
-    that touches this polygon's boundary, we offset the segment midpoint by
-    1 m to the right (perpendicular direction (dy, -dx) / length) and check
-    if the offset point is inside the polygon. If yes, the polygon is sea.
+    that touches this polygon's boundary, we probe 1 m to the right and 1 m
+    to the left of the segment midpoint to see which side of the line the
+    polygon is on. The segment's length is added to ``sea_weight`` or
+    ``land_weight`` accordingly, and the polygon is classified by which
+    weight is larger.
+
+    Weighted majority (rather than first-vote-wins) is required because OSM
+    coastlines often contain short noisy stretches — harbor walls, jetties,
+    fine curves — whose local right-perpendicular points the "wrong" way.
+    Letting long, well-oriented coastlines outweigh short noisy ones gives
+    a stable classification.
 
     Args:
         polygon: Candidate shapely Polygon to classify.
         coastlines: List of clipped shapely LineStrings (in the same CRS).
 
     Returns:
-        True if any coastline segment classifies the polygon as sea.
+        True if the total length of segments classifying the polygon as sea
+        exceeds the total length classifying it as land. Ties go to land.
     """
+    sea_weight = 0.0
+    land_weight = 0.0
     poly_boundary = polygon.boundary
     for line in coastlines:
         if not poly_boundary.intersects(line):
@@ -659,11 +670,18 @@ def _polygon_is_sea(polygon: Any, coastlines: list) -> bool:
                 continue
             mid_x = (x0 + x1) / 2
             mid_y = (y0 + y1) / 2
-            probe_x = mid_x + (dy / length) * 1.0
-            probe_y = mid_y - (dx / length) * 1.0
-            if polygon.contains(Point(probe_x, probe_y)):
-                return True
-    return False
+            # Right perpendicular probe (sea side per OSM convention)
+            right_x = mid_x + (dy / length) * 1.0
+            right_y = mid_y - (dx / length) * 1.0
+            if polygon.contains(Point(right_x, right_y)):
+                sea_weight += length
+                continue
+            # Left perpendicular probe (land side)
+            left_x = mid_x - (dy / length) * 1.0
+            left_y = mid_y + (dx / length) * 1.0
+            if polygon.contains(Point(left_x, left_y)):
+                land_weight += length
+    return sea_weight > land_weight
 
 
 def _compute_sea_polygons(

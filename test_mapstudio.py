@@ -481,3 +481,38 @@ class TestComputeSeaPolygons:
         assert not sea_union.contains(Point(500, 500)), (
             "Inside the loop should be land, not sea"
         )
+
+    def test_noisy_short_segment_does_not_flip_classification(self):
+        """Regression: a tiny noisy coastline stretch must not flip the
+        classification of a polygon that's overwhelmingly bounded by a
+        well-oriented long coastline.
+
+        Setup: a long vertical coastline at x=500 going +Y (sea on right = +X).
+        Plus a tiny 4-segment zigzag at (300, 800) whose local right-side
+        probes happen to fall in the LEFT (land) half. The long coastline
+        votes correctly for the left half being LAND; the zigzag votes
+        incorrectly for the left half being SEA. The long coastline must
+        win.
+        """
+        long_coast = LineString([(500, 0), (500, 1000)])
+        # Zigzag: a noisy little stretch in the land half whose local
+        # right-perpendiculars point further into the land half.
+        zigzag = LineString([
+            (300, 800),
+            (310, 810),
+            (300, 820),
+            (310, 830),
+            (300, 840),
+        ])
+        gdf = self._make_gdf([long_coast, zigzag])
+        bbox = box(0, 0, 1000, 1000)
+
+        result = cmp._compute_sea_polygons(gdf, bbox, self._CRS)
+
+        assert len(result) >= 1
+        sea_union = gpd.GeoSeries(result).union_all()
+        # Right half is sea (correct OSM convention from the long coast)
+        assert sea_union.contains(Point(750, 500))
+        # Left half must NOT be classified as sea, despite the zigzag's
+        # local right-side votes for "sea" inside the left polygon.
+        assert not sea_union.contains(Point(250, 500))
