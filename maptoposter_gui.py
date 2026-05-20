@@ -341,14 +341,21 @@ class ModernMapPosterGUI(ctk.CTk):
         return themes
 
     def _load_theme_descriptions(self) -> dict[str, str]:
-        """Load description field from each theme JSON."""
+        """Load description field from each theme JSON.
+
+        Side effect: populates ``self._theme_dict_cache`` with the full theme
+        dict for each parsed theme. This avoids calling ``load_theme()`` on
+        every theme dropdown change (which would log an INFO line each time).
+        """
         descriptions: dict[str, str] = {}
+        self._theme_dict_cache: dict[str, dict] = {}
         if not self.themes_dir.exists():
             return descriptions
         for path in self.themes_dir.glob("*.json"):
             try:
                 with open(path, encoding="utf-8") as f:
                     data = json.load(f)
+                self._theme_dict_cache[path.stem] = data
                 desc = data.get("description", "")
                 if desc:
                     descriptions[path.stem] = desc
@@ -364,12 +371,22 @@ class ModernMapPosterGUI(ctk.CTk):
 
     def _show_preview_placeholder(self) -> None:
         """Display the 'generate a poster' placeholder text in the preview label."""
-        self._preview_image_handle = None
         if not hasattr(self, 'preview_label'):
-            return  # Called during setup_ui before preview widget exists; ignore
+            self._preview_image_handle = None
+            return  # Called during setup_ui before preview widget exists
         try:
+            # If a previous image was set, replace it with a fully-transparent
+            # CTkImage. Passing image="" or image=None to CTkLabel.configure
+            # triggers a UserWarning (CTkImage required).
+            if self._preview_image_handle is not None:
+                from PIL import Image as _PILImage
+                blank = _PILImage.new("RGBA", (180, 240), (0, 0, 0, 0))
+                self._preview_image_handle = ctk.CTkImage(
+                    light_image=blank, dark_image=blank, size=(180, 240),
+                )
+                self.preview_label.configure(image=self._preview_image_handle)
             self.preview_label.configure(
-                image="", text="Generate a poster\nto see preview",
+                text="Generate a poster\nto see preview",
                 text_color="gray50",
             )
         except Exception as e:
@@ -402,8 +419,13 @@ class ModernMapPosterGUI(ctk.CTk):
         if not theme_name or theme_name == "---":
             return  # Theme dropdown separator entry; skip
 
-        from create_map_poster import load_theme
-        theme = load_theme(theme_name)
+        # Use the in-memory cache populated at startup to avoid the
+        # INFO log line that load_theme() emits on every call.
+        theme = getattr(self, '_theme_dict_cache', {}).get(theme_name)
+        if theme is None:
+            # Fallback for themes added after startup or that failed to parse.
+            from create_map_poster import load_theme
+            theme = load_theme(theme_name)
         cache = self._preview_cache
 
         def _worker():

@@ -69,12 +69,19 @@ def save_preview_cache(
     os.makedirs(cache_dir, exist_ok=True)
     gpkg_path = os.path.join(cache_dir, _GPKG_NAME)
     json_path = os.path.join(cache_dir, _JSON_NAME)
-    gpkg_tmp = gpkg_path + ".tmp"
-    json_tmp = json_path + ".tmp"
+    # Use "preview.tmp.gpkg" / "preview.tmp.json" (extension preserved) rather
+    # than "preview.gpkg.tmp" / "preview.json.tmp" to avoid pyogrio's warning
+    # about a non-conformant GPKG file extension during the atomic-write window.
+    gpkg_tmp = os.path.join(cache_dir, "preview.tmp.gpkg")
+    json_tmp = os.path.join(cache_dir, "preview.tmp.json")
 
     # Remove any stale tmp from a previous failed write
-    if os.path.exists(gpkg_tmp):
-        os.remove(gpkg_tmp)
+    for stale in (gpkg_tmp, gpkg_path + ".tmp", json_path + ".tmp"):
+        if os.path.exists(stale):
+            try:
+                os.remove(stale)
+            except OSError:
+                pass
 
     layers = [
         ("roads", roads),
