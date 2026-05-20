@@ -687,6 +687,24 @@ def _compute_sea_polygons(
         return []
 
 
+def _render_sea(
+    ax: plt.Axes,
+    sea_polygons: list,
+    theme: dict[str, str],
+    target_crs: Any,
+) -> None:
+    """Render sea polygons on the map axes.
+
+    Drawn at ``zorder=0.4`` so inland water (``0.5``) paints cleanly on top.
+    Both use ``theme['water']`` so the result is visually seamless.
+    """
+    if not sea_polygons:
+        return
+    GeoSeries(sea_polygons, crs=target_crs).plot(
+        ax=ax, facecolor=theme["water"], edgecolor="none", zorder=0.4,
+    )
+
+
 def _render_water(
     ax: plt.Axes,
     water_polys: Optional[GeoDataFrame],
