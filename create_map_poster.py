@@ -1212,6 +1212,8 @@ Examples:
                        help='Hide water bodies from the map')
     parser.add_argument('--no-parks', action='store_true',
                        help='Hide parks/green spaces from the map')
+    parser.add_argument('--show-sea', action='store_true',
+                       help='Render open sea/ocean for coastal locations (off by default)')
     parser.add_argument('--verbose', '-v', action='store_true',
                        help='Enable debug logging')
 
@@ -1325,6 +1327,7 @@ Examples:
                 no_roads=args.no_roads,
                 no_water=args.no_water,
                 no_parks=args.no_parks,
+                show_sea=args.show_sea,
                 font_family=font_family,
                 theme=current_theme,
                 network_type=args.network_type,
