@@ -61,13 +61,16 @@ import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import osmnx as ox
-from geopandas import GeoDataFrame
+# Private import: osmnx 2.0.7 does not re-export InsufficientResponseError at top level.
+from osmnx._errors import InsufficientResponseError
+from geopandas import GeoDataFrame, GeoSeries
 from geopy.geocoders import Nominatim
 from lat_lon_parser import parse
 from font_management import load_fonts
 from matplotlib.font_manager import FontProperties
 from networkx import MultiDiGraph
-from shapely.geometry import Point
+from shapely.geometry import Point, box
+from shapely.ops import polygonize, unary_union
 from tqdm import tqdm
 
 import road_categories
@@ -460,12 +463,85 @@ def fetch_features(
 ) -> Optional[GeoDataFrame]:
     """
     Fetch geographic features (water, parks, etc.) from OpenStreetMap.
+
+    Returns None on failure. ``InsufficientResponseError`` (OSMnx's "no
+    matching features" case) is the normal outcome for areas that simply
+    lack the requested features (e.g. an inland city has no water features)
+    and is logged at debug level. Other exceptions are logged at error
+    level since they may indicate a real problem (network, API, etc.).
+
     Note: GeoDataFrames are not JSON-serializable, so we rely on OSMnx caching.
     """
     try:
         return ox.features_from_point(point, tags=tags, dist=dist)
+    except InsufficientResponseError:
+        logger.debug("No %s features found in the requested area", name)
+        return None
     except Exception as e:
         logger.error("OSMnx error while fetching %s: %s", name, e)
+        return None
+
+
+def _fetch_coastlines(
+    point: tuple[float, float],
+    dist: float,
+) -> Optional[GeoDataFrame]:
+    """
+    Fetch OSM coastline LineStrings around a point.
+
+    Coastlines are stored in OSM as ``natural=coastline`` ways (LineStrings,
+    not polygons). The sea is reconstructed by polygonising them; see
+    ``_compute_sea_polygons``.
+
+    Returns None on any error; the caller renders without sea in that case,
+    so this is logged at warning rather than error level.
+
+    Args:
+        point: (latitude, longitude) tuple for center point
+        dist: Distance in meters from center point
+    """
+    try:
+        return ox.features_from_point(
+            point, tags={"natural": "coastline"}, dist=dist,
+        )
+    except InsufficientResponseError:
+        logger.debug("No coastlines found in the requested area (inland location)")
+        return None
+    except Exception as e:
+        logger.warning("OSMnx error while fetching coastlines: %s", e)
+        return None
+
+
+def _fetch_wetlands(
+    point: tuple[float, float],
+    dist: float,
+) -> Optional[GeoDataFrame]:
+    """
+    Fetch OSM ``natural=wetland`` polygons around a point.
+
+    Wetlands are stored in OSM as polygons (unlike coastlines, which are
+    linestrings). They are visually water-like — marshes, reedbeds, swamps,
+    saltmarshes, tidal flats, mangroves — and worth rendering as water on
+    posters of areas like the Bertoška Bonifika near Koper, which is technically
+    a marsh but appears as a permanent water body.
+
+    Returns None on any error; the caller renders without wetlands in that case,
+    so this is logged at warning rather than error level. Returns None silently
+    (debug log) when no wetlands exist in the queried area.
+
+    Args:
+        point: (latitude, longitude) tuple for center point
+        dist: Distance in meters from center point
+    """
+    try:
+        return ox.features_from_point(
+            point, tags={"natural": "wetland"}, dist=dist,
+        )
+    except InsufficientResponseError:
+        logger.debug("No wetlands found in the requested area")
+        return None
+    except Exception as e:
+        logger.warning("OSMnx error while fetching wetlands: %s", e)
         return None
 
 
@@ -562,6 +638,139 @@ def _project_features(
         return polys.to_crs(g_proj.graph['crs'])
 
 
+def _polygon_is_sea(polygon: Any, coastlines: list) -> bool:
+    """Determine whether a polygon lies on the sea side of its bounding coastlines.
+
+    OSM convention: when walking a coastline way in its native direction,
+    land is on the LEFT and sea is on the RIGHT. For each coastline segment
+    that touches this polygon's boundary, we probe 1 m to the right and 1 m
+    to the left of the segment midpoint to see which side of the line the
+    polygon is on. The segment's length is added to ``sea_weight`` or
+    ``land_weight`` accordingly, and the polygon is classified by which
+    weight is larger.
+
+    Weighted majority (rather than first-vote-wins) is required because OSM
+    coastlines often contain short noisy stretches — harbor walls, jetties,
+    fine curves — whose local right-perpendicular points the "wrong" way.
+    Letting long, well-oriented coastlines outweigh short noisy ones gives
+    a stable classification.
+
+    Args:
+        polygon: Candidate shapely Polygon to classify.
+        coastlines: List of clipped shapely LineStrings (in the same CRS).
+
+    Returns:
+        True if the total length of segments classifying the polygon as sea
+        exceeds the total length classifying it as land. Ties go to land.
+    """
+    sea_weight = 0.0
+    land_weight = 0.0
+    poly_boundary = polygon.boundary
+    for line in coastlines:
+        if not poly_boundary.intersects(line):
+            continue
+        coords = list(line.coords)
+        for i in range(len(coords) - 1):
+            x0, y0 = coords[i]
+            x1, y1 = coords[i + 1]
+            dx = x1 - x0
+            dy = y1 - y0
+            length = (dx * dx + dy * dy) ** 0.5
+            if length == 0:
+                continue
+            mid_x = (x0 + x1) / 2
+            mid_y = (y0 + y1) / 2
+            # Right perpendicular probe (sea side per OSM convention)
+            right_x = mid_x + (dy / length) * 1.0
+            right_y = mid_y - (dx / length) * 1.0
+            if polygon.contains(Point(right_x, right_y)):
+                sea_weight += length
+                continue
+            # Left perpendicular probe (land side)
+            left_x = mid_x - (dy / length) * 1.0
+            left_y = mid_y + (dx / length) * 1.0
+            if polygon.contains(Point(left_x, left_y)):
+                land_weight += length
+    return sea_weight > land_weight
+
+
+def _compute_sea_polygons(
+    coastlines: Optional[GeoDataFrame],
+    bbox_polygon: Any,
+    target_crs: Any,
+) -> list:
+    """Partition the visible bbox into sea polygons using OSM coastline data.
+
+    Args:
+        coastlines: GeoDataFrame from `_fetch_coastlines`, may be None/empty.
+        bbox_polygon: shapely Polygon describing the visible map area, in
+            ``target_crs``.
+        target_crs: CRS to project coastlines into (same CRS as the projected
+            graph used for rendering).
+
+    Returns:
+        List of shapely Polygons classified as sea. Empty if no coastlines
+        intersect the bbox or any error occurs.
+    """
+    if coastlines is None or coastlines.empty:
+        return []
+    try:
+        lines = coastlines[coastlines.geometry.type.isin(
+            ["LineString", "MultiLineString"]
+        )]
+        if lines.empty:
+            return []
+        if lines.crs is not None and lines.crs != target_crs:
+            lines = lines.to_crs(target_crs)
+
+        clipped: list = []
+        for geom in lines.geometry:
+            if geom is None or geom.is_empty:
+                continue
+            clipped_geom = geom.intersection(bbox_polygon)
+            if clipped_geom.is_empty:
+                continue
+            if clipped_geom.geom_type == "LineString":
+                clipped.append(clipped_geom)
+            elif clipped_geom.geom_type == "MultiLineString":
+                clipped.extend(list(clipped_geom.geoms))
+            elif clipped_geom.geom_type == "GeometryCollection":
+                for part in clipped_geom.geoms:
+                    if part.geom_type == "LineString":
+                        clipped.append(part)
+                    elif part.geom_type == "MultiLineString":
+                        clipped.extend(list(part.geoms))
+
+        if not clipped:
+            return []
+
+        merged = unary_union(clipped + [bbox_polygon.boundary])
+        polygons = list(polygonize(merged))
+
+        return [poly for poly in polygons if _polygon_is_sea(poly, clipped)]
+    except Exception as e:
+        logger.warning("Sea polygon computation failed: %s", e)
+        return []
+
+
+def _render_sea(
+    ax: plt.Axes,
+    sea_polygons: list,
+    theme: dict[str, str],
+    target_crs: Any,
+) -> None:
+    """Render sea polygons on the map axes.
+
+    Drawn at ``zorder=0.4`` so inland water (``0.5``) paints cleanly on top.
+    Both use ``theme['water']`` so the result is visually seamless.
+    """
+    if not sea_polygons:
+        return
+    GeoSeries(sea_polygons, crs=target_crs).plot(
+        ax=ax, facecolor=theme['water'], edgecolor='none', zorder=0.4,
+    )
+
+
 def _render_water(
     ax: plt.Axes,
     water_polys: Optional[GeoDataFrame],
@@ -570,6 +779,21 @@ def _render_water(
     """Render water polygons on the map axes."""
     if water_polys is not None and not water_polys.empty:
         water_polys.plot(ax=ax, facecolor=theme['water'], edgecolor='none', zorder=0.5)
+
+
+def _render_wetlands(
+    ax: plt.Axes,
+    wetlands_polys: Optional[GeoDataFrame],
+    theme: dict[str, str],
+) -> None:
+    """Render wetland polygons using the theme's water colour.
+
+    Drawn at ``zorder=0.6`` so it paints above inland water (``0.5``) but
+    below parks (``0.8``). All three of sea (0.4), water (0.5), and wetlands
+    (0.6) use ``theme['water']`` so the result is visually seamless.
+    """
+    if wetlands_polys is not None and not wetlands_polys.empty:
+        wetlands_polys.plot(ax=ax, facecolor=theme['water'], edgecolor='none', zorder=0.6)
 
 
 def _render_parks(
@@ -710,6 +934,8 @@ def create_poster(
     no_roads: bool = False,
     no_water: bool = False,
     no_parks: bool = False,
+    show_sea: bool = False,
+    show_wetlands: bool = False,
     font_family: str = "sans-serif",
     theme: Optional[dict[str, str]] = None,
     network_type: str = "all",
@@ -740,6 +966,10 @@ def create_poster(
         no_roads: If True, hide roads
         no_water: If True, hide water features
         no_parks: If True, hide park features
+        show_sea: If True, render open sea/ocean using OSM coastline data
+            (off by default; ignored when no_water is True)
+        show_wetlands: If True, render OSM ``natural=wetland`` polygons using
+            the theme's water colour (off by default; ignored when no_water is True)
         font_family: Font family name for text rendering
         theme: Theme dictionary (required)
         network_type: OSMnx network type ('drive', 'walk', 'bike', or 'all')
@@ -770,8 +1000,10 @@ def create_poster(
     logger.info("Generating map for %s, %s...", city, country)
 
     # Progress bar for data fetching
+    fetch_wetlands = show_wetlands and not no_water
+    total_steps = 3 + (1 if fetch_wetlands else 0)
     with tqdm(
-        total=3,
+        total=total_steps,
         desc="Fetching map data",
         unit="step",
         bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}",
@@ -803,6 +1035,12 @@ def create_poster(
             )
         pbar.update(1)
 
+        wetlands = None
+        if fetch_wetlands:
+            pbar.set_description("Downloading wetlands")
+            wetlands = _fetch_wetlands(point, compensated_dist)
+            pbar.update(1)
+
     logger.info("All data retrieved successfully!")
 
     # Setup Plot
@@ -813,18 +1051,36 @@ def create_poster(
 
     g_proj = ox.project_graph(g)
 
-    # Render layers
+    # Project features (water/parks/wetlands) to graph CRS
     water_polys = _project_features(water, g_proj)
     parks_polys = _project_features(parks, g_proj)
+    wetlands_polys = _project_features(wetlands, g_proj)
+
+    # Determine cropping limits BEFORE rendering so we can build the sea bbox
+    crop_xlim, crop_ylim = get_crop_limits(g_proj, point, fig, compensated_dist)
+
+    # Sea polygons (opt-in via show_sea; honours no_water)
+    sea_polys: list = []
+    if show_sea and not no_water:
+        coastlines = _fetch_coastlines(point, compensated_dist)
+        bbox_polygon = box(
+            crop_xlim[0], crop_ylim[0], crop_xlim[1], crop_ylim[1],
+        )
+        sea_polys = _compute_sea_polygons(
+            coastlines, bbox_polygon, g_proj.graph['crs'],
+        )
+
+    # Render layers: sea (lowest), then inland water, then wetlands, then parks
+    if sea_polys:
+        _render_sea(ax, sea_polys, theme, g_proj.graph['crs'])
 
     if not no_water:
         _render_water(ax, water_polys, theme)
+        if show_wetlands:
+            _render_wetlands(ax, wetlands_polys, theme)
 
     if not no_parks:
         _render_parks(ax, parks_polys, theme)
-
-    # Determine cropping limits
-    crop_xlim, crop_ylim = get_crop_limits(g_proj, point, fig, compensated_dist)
 
     if not no_roads:
         logger.info("Applying road hierarchy colors...")
@@ -1051,6 +1307,10 @@ Examples:
                        help='Hide water bodies from the map')
     parser.add_argument('--no-parks', action='store_true',
                        help='Hide parks/green spaces from the map')
+    parser.add_argument('--show-sea', action='store_true',
+                       help='Render open sea/ocean for coastal locations (off by default)')
+    parser.add_argument('--show-wetlands', action='store_true',
+                       help='Render OSM wetland polygons as water (off by default)')
     parser.add_argument('--verbose', '-v', action='store_true',
                        help='Enable debug logging')
 
@@ -1164,6 +1424,8 @@ Examples:
                 no_roads=args.no_roads,
                 no_water=args.no_water,
                 no_parks=args.no_parks,
+                show_sea=args.show_sea,
+                show_wetlands=args.show_wetlands,
                 font_family=font_family,
                 theme=current_theme,
                 network_type=args.network_type,
