@@ -463,10 +463,20 @@ def fetch_features(
 ) -> Optional[GeoDataFrame]:
     """
     Fetch geographic features (water, parks, etc.) from OpenStreetMap.
+
+    Returns None on failure. ``InsufficientResponseError`` (OSMnx's "no
+    matching features" case) is the normal outcome for areas that simply
+    lack the requested features (e.g. an inland city has no water features)
+    and is logged at debug level. Other exceptions are logged at error
+    level since they may indicate a real problem (network, API, etc.).
+
     Note: GeoDataFrames are not JSON-serializable, so we rely on OSMnx caching.
     """
     try:
         return ox.features_from_point(point, tags=tags, dist=dist)
+    except InsufficientResponseError:
+        logger.debug("No %s features found in the requested area", name)
+        return None
     except Exception as e:
         logger.error("OSMnx error while fetching %s: %s", name, e)
         return None
