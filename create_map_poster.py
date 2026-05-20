@@ -474,11 +474,19 @@ def _fetch_coastlines(
     point: tuple[float, float],
     dist: float,
 ) -> Optional[GeoDataFrame]:
-    """Fetch OSM coastline LineStrings around a point.
+    """
+    Fetch OSM coastline LineStrings around a point.
 
     Coastlines are stored in OSM as ``natural=coastline`` ways (LineStrings,
     not polygons). The sea is reconstructed by polygonising them; see
     ``_compute_sea_polygons``.
+
+    Returns None on any error; the caller renders without sea in that case,
+    so this is logged at warning rather than error level.
+
+    Args:
+        point: (latitude, longitude) tuple for center point
+        dist: Distance in meters from center point
     """
     try:
         return ox.features_from_point(
