@@ -470,6 +470,25 @@ def fetch_features(
         return None
 
 
+def _fetch_coastlines(
+    point: tuple[float, float],
+    dist: float,
+) -> Optional[GeoDataFrame]:
+    """Fetch OSM coastline LineStrings around a point.
+
+    Coastlines are stored in OSM as ``natural=coastline`` ways (LineStrings,
+    not polygons). The sea is reconstructed by polygonising them; see
+    ``_compute_sea_polygons``.
+    """
+    try:
+        return ox.features_from_point(
+            point, tags={"natural": "coastline"}, dist=dist,
+        )
+    except Exception as e:
+        logger.warning("OSMnx error while fetching coastlines: %s", e)
+        return None
+
+
 def organize_svg_layers(svg_path: str) -> None:
     """
     Post-process SVG to organize road lines into layers by width.
