@@ -502,6 +502,39 @@ def _fetch_coastlines(
         return None
 
 
+def _fetch_wetlands(
+    point: tuple[float, float],
+    dist: float,
+) -> Optional[GeoDataFrame]:
+    """
+    Fetch OSM ``natural=wetland`` polygons around a point.
+
+    Wetlands are stored in OSM as polygons (unlike coastlines, which are
+    linestrings). They are visually water-like — marshes, reedbeds, swamps,
+    saltmarshes, tidal flats, mangroves — and worth rendering as water on
+    posters of areas like the Bertoška Bonifika near Koper, which is technically
+    a marsh but appears as a permanent water body.
+
+    Returns None on any error; the caller renders without wetlands in that case,
+    so this is logged at warning rather than error level. Returns None silently
+    (debug log) when no wetlands exist in the queried area.
+
+    Args:
+        point: (latitude, longitude) tuple for center point
+        dist: Distance in meters from center point
+    """
+    try:
+        return ox.features_from_point(
+            point, tags={"natural": "wetland"}, dist=dist,
+        )
+    except InsufficientResponseError:
+        logger.debug("No wetlands found in the requested area")
+        return None
+    except Exception as e:
+        logger.warning("OSMnx error while fetching wetlands: %s", e)
+        return None
+
+
 def organize_svg_layers(svg_path: str) -> None:
     """
     Post-process SVG to organize road lines into layers by width.
@@ -720,6 +753,21 @@ def _render_water(
         water_polys.plot(ax=ax, facecolor=theme['water'], edgecolor='none', zorder=0.5)
 
 
+def _render_wetlands(
+    ax: plt.Axes,
+    wetlands_polys: Optional[GeoDataFrame],
+    theme: dict[str, str],
+) -> None:
+    """Render wetland polygons using the theme's water colour.
+
+    Drawn at ``zorder=0.6`` so it paints above inland water (``0.5``) but
+    below parks (``0.8``). All three of sea (0.4), water (0.5), and wetlands
+    (0.6) use ``theme['water']`` so the result is visually seamless.
+    """
+    if wetlands_polys is not None and not wetlands_polys.empty:
+        wetlands_polys.plot(ax=ax, facecolor=theme['water'], edgecolor='none', zorder=0.6)
+
+
 def _render_parks(
     ax: plt.Axes,
     parks_polys: Optional[GeoDataFrame],
@@ -859,6 +907,7 @@ def create_poster(
     no_water: bool = False,
     no_parks: bool = False,
     show_sea: bool = False,
+    show_wetlands: bool = False,
     font_family: str = "sans-serif",
     theme: Optional[dict[str, str]] = None,
     network_type: str = "all",
@@ -891,6 +940,8 @@ def create_poster(
         no_parks: If True, hide park features
         show_sea: If True, render open sea/ocean using OSM coastline data
             (off by default; ignored when no_water is True)
+        show_wetlands: If True, render OSM ``natural=wetland`` polygons using
+            the theme's water colour (off by default; ignored when no_water is True)
         font_family: Font family name for text rendering
         theme: Theme dictionary (required)
         network_type: OSMnx network type ('drive', 'walk', 'bike', or 'all')
@@ -921,8 +972,10 @@ def create_poster(
     logger.info("Generating map for %s, %s...", city, country)
 
     # Progress bar for data fetching
+    fetch_wetlands = show_wetlands and not no_water
+    total_steps = 3 + (1 if fetch_wetlands else 0)
     with tqdm(
-        total=3,
+        total=total_steps,
         desc="Fetching map data",
         unit="step",
         bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}",
@@ -954,6 +1007,12 @@ def create_poster(
             )
         pbar.update(1)
 
+        wetlands = None
+        if fetch_wetlands:
+            pbar.set_description("Downloading wetlands")
+            wetlands = _fetch_wetlands(point, compensated_dist)
+            pbar.update(1)
+
     logger.info("All data retrieved successfully!")
 
     # Setup Plot
@@ -964,9 +1023,10 @@ def create_poster(
 
     g_proj = ox.project_graph(g)
 
-    # Project features (water/parks) to graph CRS
+    # Project features (water/parks/wetlands) to graph CRS
     water_polys = _project_features(water, g_proj)
     parks_polys = _project_features(parks, g_proj)
+    wetlands_polys = _project_features(wetlands, g_proj)
 
     # Determine cropping limits BEFORE rendering so we can build the sea bbox
     crop_xlim, crop_ylim = get_crop_limits(g_proj, point, fig, compensated_dist)
@@ -982,12 +1042,14 @@ def create_poster(
             coastlines, bbox_polygon, g_proj.graph['crs'],
         )
 
-    # Render layers: sea (lowest), then inland water, then parks
+    # Render layers: sea (lowest), then inland water, then wetlands, then parks
     if sea_polys:
         _render_sea(ax, sea_polys, theme, g_proj.graph['crs'])
 
     if not no_water:
         _render_water(ax, water_polys, theme)
+        if show_wetlands:
+            _render_wetlands(ax, wetlands_polys, theme)
 
     if not no_parks:
         _render_parks(ax, parks_polys, theme)
@@ -1219,6 +1281,8 @@ Examples:
                        help='Hide parks/green spaces from the map')
     parser.add_argument('--show-sea', action='store_true',
                        help='Render open sea/ocean for coastal locations (off by default)')
+    parser.add_argument('--show-wetlands', action='store_true',
+                       help='Render OSM wetland polygons as water (off by default)')
     parser.add_argument('--verbose', '-v', action='store_true',
                        help='Enable debug logging')
 
@@ -1333,6 +1397,7 @@ Examples:
                 no_water=args.no_water,
                 no_parks=args.no_parks,
                 show_sea=args.show_sea,
+                show_wetlands=args.show_wetlands,
                 font_family=font_family,
                 theme=current_theme,
                 network_type=args.network_type,
