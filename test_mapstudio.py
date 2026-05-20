@@ -516,3 +516,110 @@ class TestComputeSeaPolygons:
         # Left half must NOT be classified as sea, despite the zigzag's
         # local right-side votes for "sea" inside the left polygon.
         assert not sea_union.contains(Point(250, 500))
+
+
+# ===========================================================================
+# preview_cache — save / load roundtrip and corruption handling
+# ===========================================================================
+
+from shapely.geometry import LineString, Polygon  # noqa: E402, F811
+
+
+class TestPreviewCache:
+    """Tests for preview_cache.save_preview_cache and load_preview_cache.
+
+    No GUI, no matplotlib rendering — just the data-layer roundtrip and
+    failure-mode handling.
+    """
+
+    _CRS = "EPSG:32633"
+
+    def _make_metadata(self):
+        return {
+            "version": 1,
+            "city": "TestCity",
+            "country": "TestCountry",
+            "center": [45.0, 13.0],
+            "compensated_dist": 5000.0,
+            "crop_xlim": [-1000.0, 1000.0],
+            "crop_ylim": [-1000.0, 1000.0],
+            "target_crs": self._CRS,
+            "width": 12,
+            "height": 16,
+        }
+
+    def test_preview_cache_roundtrip(self, tmp_path):
+        """save_preview_cache then load_preview_cache must roundtrip GDFs + metadata."""
+        import preview_cache
+        roads = gpd.GeoDataFrame(
+            {"highway": ["residential", "primary"]},
+            geometry=[
+                LineString([(0, 0), (100, 100)]),
+                LineString([(100, 100), (200, 0)]),
+            ],
+            crs=self._CRS,
+        )
+        water = gpd.GeoDataFrame(
+            geometry=[Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])],
+            crs=self._CRS,
+        )
+
+        preview_cache.save_preview_cache(
+            str(tmp_path),
+            metadata=self._make_metadata(),
+            roads=roads,
+            water=water,
+            parks=None,
+            wetlands=None,
+            religious=None,
+            historic=None,
+            sea_polys=None,
+            target_crs=self._CRS,
+        )
+
+        result = preview_cache.load_preview_cache(str(tmp_path))
+        assert result is not None
+        assert len(result.roads) == 2
+        assert list(result.roads["highway"]) == ["residential", "primary"]
+        assert result.water is not None
+        assert len(result.water) == 1
+        assert result.parks is None
+        assert result.wetlands is None
+        assert result.religious is None
+        assert result.historic is None
+        assert result.sea is None
+        assert result.metadata["city"] == "TestCity"
+        assert result.metadata["version"] == 1
+
+    def test_preview_cache_handles_corrupt_gpkg(self, tmp_path):
+        """A corrupt GPKG file must result in None, no exception raised."""
+        import preview_cache
+        (tmp_path / "preview.gpkg").write_bytes(b"not a valid gpkg")
+        (tmp_path / "preview.json").write_text(
+            '{"version": 1, "city": "X", "country": "Y", "center": [0, 0], '
+            '"compensated_dist": 1000, "crop_xlim": [0, 1], "crop_ylim": [0, 1], '
+            '"target_crs": "EPSG:32633", "width": 12, "height": 16}',
+            encoding="utf-8",
+        )
+        result = preview_cache.load_preview_cache(str(tmp_path))
+        assert result is None
+
+    def test_preview_cache_handles_corrupt_json(self, tmp_path):
+        """A corrupt JSON file must result in None, no exception raised."""
+        import preview_cache
+        # Write a minimal valid gpkg so the JSON failure is what gets exercised
+        roads = gpd.GeoDataFrame(
+            {"highway": ["residential"]},
+            geometry=[LineString([(0, 0), (1, 1)])],
+            crs=self._CRS,
+        )
+        roads.to_file(str(tmp_path / "preview.gpkg"), driver="GPKG", layer="roads")
+        (tmp_path / "preview.json").write_text("{not valid json", encoding="utf-8")
+        result = preview_cache.load_preview_cache(str(tmp_path))
+        assert result is None
+
+    def test_preview_cache_missing_files_returns_none(self, tmp_path):
+        """An empty cache directory must return None (placeholder state)."""
+        import preview_cache
+        result = preview_cache.load_preview_cache(str(tmp_path))
+        assert result is None
