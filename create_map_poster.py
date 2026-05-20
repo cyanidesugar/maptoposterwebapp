@@ -61,6 +61,7 @@ import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import osmnx as ox
+# Private import: osmnx 2.0.7 does not re-export InsufficientResponseError at top level.
 from osmnx._errors import InsufficientResponseError
 from geopandas import GeoDataFrame, GeoSeries
 from geopy.geocoders import Nominatim
@@ -658,7 +659,7 @@ def _compute_sea_polygons(
         )]
         if lines.empty:
             return []
-        if lines.crs is not None:
+        if lines.crs is not None and lines.crs != target_crs:
             lines = lines.to_crs(target_crs)
 
         clipped: list = []
