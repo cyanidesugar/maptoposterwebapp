@@ -369,6 +369,29 @@ class ModernMapPosterGUI(ctk.CTk):
         self.theme_desc_label.configure(text=desc)
         self._render_preview_async()
 
+    def _preview_target_size(self, cache: PreviewCache | None) -> tuple[int, int]:
+        """Compute preview pixel size preserving the cached poster's aspect ratio.
+
+        Bounded to 240 px in either axis. Falls back to a default portrait
+        180x240 if no cache or metadata is malformed.
+        """
+        BOUND = 240
+        DEFAULT = (180, 240)
+        if cache is None:
+            return DEFAULT
+        try:
+            w = float(cache.metadata.get("width", 12))
+            h = float(cache.metadata.get("height", 16))
+            if w <= 0 or h <= 0:
+                return DEFAULT
+            aspect = w / h
+        except (TypeError, ValueError, ZeroDivisionError):
+            return DEFAULT
+        if aspect >= 1:
+            return (BOUND, max(1, int(round(BOUND / aspect))))
+        else:
+            return (max(1, int(round(BOUND * aspect))), BOUND)
+
     def _show_preview_placeholder(self) -> None:
         """Display the 'generate a poster' placeholder text in the preview label."""
         if not hasattr(self, 'preview_label'):
@@ -385,9 +408,12 @@ class ModernMapPosterGUI(ctk.CTk):
                     light_image=blank, dark_image=blank, size=(180, 240),
                 )
                 self.preview_label.configure(image=self._preview_image_handle)
+            # Reset size to default portrait so the placeholder is consistent
+            # regardless of what aspect the previous cache had.
             self.preview_label.configure(
                 text="Generate a poster\nto see preview",
                 text_color="gray50",
+                width=180, height=240,
             )
         except Exception as e:
             logger.debug("Could not show preview placeholder: %s", e)
@@ -428,9 +454,14 @@ class ModernMapPosterGUI(ctk.CTk):
             theme = load_theme(theme_name)
         cache = self._preview_cache
 
+        target_size = self._preview_target_size(cache)
+
         def _worker():
             try:
-                image = render_preview(cache, theme, width_px=180, height_px=240)
+                image = render_preview(
+                    cache, theme,
+                    width_px=target_size[0], height_px=target_size[1],
+                )
             except Exception as e:
                 logger.warning("Preview render failed: %s", e)
                 return
@@ -439,19 +470,26 @@ class ModernMapPosterGUI(ctk.CTk):
                 if self._preview_render_token != token:
                     return
             # Marshal back to GUI thread
-            self.after(0, lambda: self._publish_preview(image))
+            self.after(0, lambda: self._publish_preview(image, target_size))
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _publish_preview(self, pil_image) -> None:
-        """Update the preview label with a freshly-rendered image. GUI thread only."""
+    def _publish_preview(self, pil_image, target_size: tuple[int, int]) -> None:
+        """Update the preview label with a freshly-rendered image. GUI thread only.
+
+        Resizes the label to match the rendered image's aspect ratio so
+        landscape and square posters preview without distortion.
+        """
         try:
             ctk_image = ctk.CTkImage(
                 light_image=pil_image, dark_image=pil_image,
-                size=(180, 240),
+                size=target_size,
             )
             self._preview_image_handle = ctk_image  # keep reference alive
-            self.preview_label.configure(image=ctk_image, text="")
+            self.preview_label.configure(
+                image=ctk_image, text="",
+                width=target_size[0], height=target_size[1],
+            )
         except Exception as e:
             logger.warning("Could not publish preview image: %s", e)
 
