@@ -1035,6 +1035,7 @@ def create_poster(
     theme: Optional[dict[str, str]] = None,
     network_type: str = "all",
     dpi: int = 300,
+    write_preview_cache: Optional[str] = None,
 ) -> None:
     """
     Generate a complete map poster with roads, water, parks, and typography.
@@ -1074,6 +1075,10 @@ def create_poster(
         font_family: Font family name for text rendering
         theme: Theme dictionary (required)
         network_type: OSMnx network type ('drive', 'walk', 'bike', or 'all')
+        write_preview_cache: If set, write a preview cache (GeoPackage +
+            JSON sidecar) into this directory at the end of a successful
+            generation. Used by the desktop GUI to populate its theme
+            preview pane. Ignored for STL output.
 
     Raises:
         RuntimeError: If street network data cannot be retrieved
@@ -1268,6 +1273,39 @@ def create_poster(
 
         logger.info("Done! Poster saved as %s", output_file)
 
+        if write_preview_cache:
+            try:
+                from preview_cache import save_preview_cache
+                roads_gdf = ox.graph_to_gdfs(g_proj, nodes=False)
+                sea_geoms = list(sea_polys) if sea_polys else None
+                preview_metadata = {
+                    "version": 1,
+                    "city": city,
+                    "country": country,
+                    "center": [point[0], point[1]],
+                    "compensated_dist": compensated_dist,
+                    "crop_xlim": [crop_xlim[0], crop_xlim[1]],
+                    "crop_ylim": [crop_ylim[0], crop_ylim[1]],
+                    "target_crs": str(g_proj.graph["crs"]),
+                    "width": width,
+                    "height": height,
+                }
+                save_preview_cache(
+                    write_preview_cache,
+                    metadata=preview_metadata,
+                    roads=roads_gdf,
+                    water=water_polys,
+                    parks=parks_polys,
+                    wetlands=wetlands_polys,
+                    religious=religious_polys,
+                    historic=historic_polys,
+                    sea_polys=sea_geoms,
+                    target_crs=g_proj.graph["crs"],
+                )
+                logger.info("Preview cache written to %s", write_preview_cache)
+            except Exception as e:
+                logger.warning("Failed to write preview cache: %s", e)
+
 
 def print_examples() -> None:
     """Print usage examples."""
@@ -1437,6 +1475,8 @@ Examples:
                        help='Render churches, mosques, synagogues, temples, and other places of worship (off by default)')
     parser.add_argument('--show-historic', action='store_true',
                        help='Render castles, palaces, monuments, ruins, and other historic features (off by default)')
+    parser.add_argument('--write-preview-cache', type=str, default=None,
+                       help='GUI-only infrastructure: write preview cache files (preview.gpkg + preview.json) to the given directory after generation')
     parser.add_argument('--verbose', '-v', action='store_true',
                        help='Enable debug logging')
 
@@ -1558,6 +1598,7 @@ Examples:
                 theme=current_theme,
                 network_type=args.network_type,
                 dpi=args.dpi,
+                write_preview_cache=args.write_preview_cache,
             )
 
         print("\n" + "=" * 50)
