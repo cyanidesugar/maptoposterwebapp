@@ -627,7 +627,7 @@ def _compute_sea_polygons(
         )]
         if lines.empty:
             return []
-        if lines.crs is not None and str(lines.crs) != str(target_crs):
+        if lines.crs is not None:
             lines = lines.to_crs(target_crs)
 
         clipped: list = []
@@ -641,6 +641,12 @@ def _compute_sea_polygons(
                 clipped.append(clipped_geom)
             elif clipped_geom.geom_type == "MultiLineString":
                 clipped.extend(list(clipped_geom.geoms))
+            elif clipped_geom.geom_type == "GeometryCollection":
+                for part in clipped_geom.geoms:
+                    if part.geom_type == "LineString":
+                        clipped.append(part)
+                    elif part.geom_type == "MultiLineString":
+                        clipped.extend(list(part.geoms))
 
         if not clipped:
             return []

@@ -451,7 +451,7 @@ class TestComputeSeaPolygons:
         result = cmp._compute_sea_polygons(gdf, bbox, self._CRS)
 
         assert len(result) >= 1, "Expected at least one sea polygon"
-        sea_union = gpd.GeoSeries(result).unary_union
+        sea_union = gpd.GeoSeries(result).union_all()
         assert sea_union.contains(Point(750, 500)), (
             "Right half (x=750) should be classified as sea"
         )
@@ -474,7 +474,7 @@ class TestComputeSeaPolygons:
         result = cmp._compute_sea_polygons(gdf, bbox, self._CRS)
 
         assert len(result) >= 1, "Expected at least one sea polygon"
-        sea_union = gpd.GeoSeries(result).unary_union
+        sea_union = gpd.GeoSeries(result).union_all()
         assert sea_union.contains(Point(100, 100)), (
             "Outside the loop should be sea"
         )
