@@ -365,6 +365,8 @@ class ModernMapPosterGUI(ctk.CTk):
     def _show_preview_placeholder(self) -> None:
         """Display the 'generate a poster' placeholder text in the preview label."""
         self._preview_image_handle = None
+        if not hasattr(self, 'preview_label'):
+            return  # Called during setup_ui before preview widget exists; ignore
         try:
             self.preview_label.configure(
                 image="", text="Generate a poster\nto see preview",

@@ -194,7 +194,6 @@ def render_preview(
     visually correct when downscaled).
     """
     # Lazy imports keep module load fast for the save/load-only path
-    from PIL import Image  # noqa: F401
     from matplotlib.figure import Figure
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     import road_categories
@@ -239,7 +238,6 @@ def render_preview(
     create_gradient_fade(ax, theme.get("gradient_color", theme["bg"]), location="top", zorder=10)
 
     canvas = FigureCanvasAgg(fig)
-    canvas.draw()
 
     buf = BytesIO()
     fig.savefig(

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased] - Community Contributions
 
 ### Added
+- **Live theme preview** - The desktop GUI now shows a thumbnail of the most-recently-generated location in the OUTPUT column, re-rendered automatically when the theme dropdown changes. The cache (`preview_cache/preview.gpkg` + `preview_cache/preview.json`) survives app restart. Includes a new `--write-preview-cache <DIR>` CLI flag and a `write_preview_cache` parameter on `create_poster()` (GUI infrastructure; off by default).
 - **Historic feature rendering** - `--show-historic` flag renders OSM `historic=*` polygons (castles, palaces, ruins, monuments, etc.) using the theme's new `landmark` colour. Off by default; existing behaviour unchanged.
 - **Religious building rendering** - `--show-religious` flag renders churches, mosques, synagogues, temples, and other places of worship using the theme's new `landmark` colour. Off by default; existing behaviour unchanged.
 - **Wetland rendering** - `--show-wetlands` flag renders OSM `natural=wetland` polygons (marshes, reedbeds, swamps, etc.) using the theme's `water` colour, useful for areas like the Bertoška Bonifika near Koper that are technically marshes but visually water bodies. Off by default; existing behaviour unchanged.

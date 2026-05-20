@@ -623,3 +623,22 @@ class TestPreviewCache:
         import preview_cache
         result = preview_cache.load_preview_cache(str(tmp_path))
         assert result is None
+
+    def test_preview_cache_future_schema_version_returns_none(self, tmp_path):
+        """A cache with a newer schema version than expected must be ignored."""
+        import preview_cache
+        # Both files exist so we get past the existence check
+        roads = gpd.GeoDataFrame(
+            {"highway": ["residential"]},
+            geometry=[LineString([(0, 0), (1, 1)])],
+            crs=self._CRS,
+        )
+        roads.to_file(str(tmp_path / "preview.gpkg"), driver="GPKG", layer="roads")
+        (tmp_path / "preview.json").write_text(
+            '{"version": 999, "city": "X", "country": "Y", "center": [0, 0], '
+            '"compensated_dist": 1000, "crop_xlim": [0, 1], "crop_ylim": [0, 1], '
+            '"target_crs": "EPSG:32633", "width": 12, "height": 16}',
+            encoding="utf-8",
+        )
+        result = preview_cache.load_preview_cache(str(tmp_path))
+        assert result is None
