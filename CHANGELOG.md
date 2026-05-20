@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased] - Community Contributions
 
 ### Added
+- **Open sea/ocean rendering** - `--show-sea` flag renders the open sea for coastal locations using the theme's `water` colour. Uses OSM `natural=coastline` data and the OSM left-land/right-sea convention. Off by default; existing behaviour unchanged.
 - **uv package manager support** ([PR #20](https://github.com/originalankur/maptoposter/pull/20))
   - Added `pyproject.toml` with project metadata and dependencies
   - Added `uv.lock` for reproducible builds
