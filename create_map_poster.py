@@ -61,13 +61,14 @@ import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import osmnx as ox
-from geopandas import GeoDataFrame
+from geopandas import GeoDataFrame, GeoSeries
 from geopy.geocoders import Nominatim
 from lat_lon_parser import parse
 from font_management import load_fonts
 from matplotlib.font_manager import FontProperties
 from networkx import MultiDiGraph
-from shapely.geometry import Point
+from shapely.geometry import Point, box
+from shapely.ops import polygonize, unary_union
 from tqdm import tqdm
 
 import road_categories
@@ -560,6 +561,97 @@ def _project_features(
     except Exception as e:
         logger.warning("CRS projection failed, using original geometry: %s", e)
         return polys.to_crs(g_proj.graph['crs'])
+
+
+def _polygon_is_sea(polygon: Any, coastlines: list) -> bool:
+    """Determine whether a polygon lies on the sea side of any bounding coastline.
+
+    OSM convention: when walking a coastline way in its native direction,
+    land is on the LEFT and sea is on the RIGHT. For each coastline segment
+    that touches this polygon's boundary, we offset the segment midpoint by
+    1 m to the right (perpendicular direction (dy, -dx) / length) and check
+    if the offset point is inside the polygon. If yes, the polygon is sea.
+
+    Args:
+        polygon: Candidate shapely Polygon to classify.
+        coastlines: List of clipped shapely LineStrings (in the same CRS).
+
+    Returns:
+        True if any coastline segment classifies the polygon as sea.
+    """
+    poly_boundary = polygon.boundary
+    for line in coastlines:
+        if not poly_boundary.intersects(line):
+            continue
+        coords = list(line.coords)
+        for i in range(len(coords) - 1):
+            x0, y0 = coords[i]
+            x1, y1 = coords[i + 1]
+            dx = x1 - x0
+            dy = y1 - y0
+            length = (dx * dx + dy * dy) ** 0.5
+            if length == 0:
+                continue
+            mid_x = (x0 + x1) / 2
+            mid_y = (y0 + y1) / 2
+            probe_x = mid_x + (dy / length) * 1.0
+            probe_y = mid_y - (dx / length) * 1.0
+            if polygon.contains(Point(probe_x, probe_y)):
+                return True
+    return False
+
+
+def _compute_sea_polygons(
+    coastlines: Optional[GeoDataFrame],
+    bbox_polygon: Any,
+    target_crs: Any,
+) -> list:
+    """Partition the visible bbox into sea polygons using OSM coastline data.
+
+    Args:
+        coastlines: GeoDataFrame from `_fetch_coastlines`, may be None/empty.
+        bbox_polygon: shapely Polygon describing the visible map area, in
+            ``target_crs``.
+        target_crs: CRS to project coastlines into (same CRS as the projected
+            graph used for rendering).
+
+    Returns:
+        List of shapely Polygons classified as sea. Empty if no coastlines
+        intersect the bbox or any error occurs.
+    """
+    if coastlines is None or coastlines.empty:
+        return []
+    try:
+        lines = coastlines[coastlines.geometry.type.isin(
+            ["LineString", "MultiLineString"]
+        )]
+        if lines.empty:
+            return []
+        if lines.crs is not None and str(lines.crs) != str(target_crs):
+            lines = lines.to_crs(target_crs)
+
+        clipped: list = []
+        for geom in lines.geometry:
+            if geom is None or geom.is_empty:
+                continue
+            clipped_geom = geom.intersection(bbox_polygon)
+            if clipped_geom.is_empty:
+                continue
+            if clipped_geom.geom_type == "LineString":
+                clipped.append(clipped_geom)
+            elif clipped_geom.geom_type == "MultiLineString":
+                clipped.extend(list(clipped_geom.geoms))
+
+        if not clipped:
+            return []
+
+        merged = unary_union(clipped + [bbox_polygon.boundary])
+        polygons = list(polygonize(merged))
+
+        return [poly for poly in polygons if _polygon_is_sea(poly, clipped)]
+    except Exception as e:
+        logger.warning("Sea polygon computation failed: %s", e)
+        return []
 
 
 def _render_water(
