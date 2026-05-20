@@ -701,7 +701,7 @@ def _render_sea(
     if not sea_polygons:
         return
     GeoSeries(sea_polygons, crs=target_crs).plot(
-        ax=ax, facecolor=theme["water"], edgecolor="none", zorder=0.4,
+        ax=ax, facecolor=theme['water'], edgecolor='none', zorder=0.4,
     )
 
 
