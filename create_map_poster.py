@@ -61,6 +61,7 @@ import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import osmnx as ox
+from osmnx._errors import InsufficientResponseError
 from geopandas import GeoDataFrame, GeoSeries
 from geopy.geocoders import Nominatim
 from lat_lon_parser import parse
@@ -492,6 +493,9 @@ def _fetch_coastlines(
         return ox.features_from_point(
             point, tags={"natural": "coastline"}, dist=dist,
         )
+    except InsufficientResponseError:
+        logger.debug("No coastlines found in the requested area (inland location)")
+        return None
     except Exception as e:
         logger.warning("OSMnx error while fetching coastlines: %s", e)
         return None
