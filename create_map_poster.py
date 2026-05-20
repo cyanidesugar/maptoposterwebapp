@@ -853,6 +853,7 @@ def create_poster(
     no_roads: bool = False,
     no_water: bool = False,
     no_parks: bool = False,
+    show_sea: bool = False,
     font_family: str = "sans-serif",
     theme: Optional[dict[str, str]] = None,
     network_type: str = "all",
@@ -883,6 +884,8 @@ def create_poster(
         no_roads: If True, hide roads
         no_water: If True, hide water features
         no_parks: If True, hide park features
+        show_sea: If True, render open sea/ocean using OSM coastline data
+            (off by default; ignored when no_water is True)
         font_family: Font family name for text rendering
         theme: Theme dictionary (required)
         network_type: OSMnx network type ('drive', 'walk', 'bike', or 'all')
@@ -956,18 +959,33 @@ def create_poster(
 
     g_proj = ox.project_graph(g)
 
-    # Render layers
+    # Project features (water/parks) to graph CRS
     water_polys = _project_features(water, g_proj)
     parks_polys = _project_features(parks, g_proj)
+
+    # Determine cropping limits BEFORE rendering so we can build the sea bbox
+    crop_xlim, crop_ylim = get_crop_limits(g_proj, point, fig, compensated_dist)
+
+    # Sea polygons (opt-in via show_sea; honours no_water)
+    sea_polys: list = []
+    if show_sea and not no_water:
+        coastlines = _fetch_coastlines(point, compensated_dist)
+        bbox_polygon = box(
+            crop_xlim[0], crop_ylim[0], crop_xlim[1], crop_ylim[1],
+        )
+        sea_polys = _compute_sea_polygons(
+            coastlines, bbox_polygon, g_proj.graph['crs'],
+        )
+
+    # Render layers: sea (lowest), then inland water, then parks
+    if sea_polys:
+        _render_sea(ax, sea_polys, theme, g_proj.graph['crs'])
 
     if not no_water:
         _render_water(ax, water_polys, theme)
 
     if not no_parks:
         _render_parks(ax, parks_polys, theme)
-
-    # Determine cropping limits
-    crop_xlim, crop_ylim = get_crop_limits(g_proj, point, fig, compensated_dist)
 
     if not no_roads:
         logger.info("Applying road hierarchy colors...")
