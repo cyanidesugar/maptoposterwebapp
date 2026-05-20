@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased] - Community Contributions
 
 ### Added
+- **Historic feature rendering** - `--show-historic` flag renders OSM `historic=*` polygons (castles, palaces, ruins, monuments, etc.) using the theme's new `landmark` colour. Off by default; existing behaviour unchanged.
+- **Religious building rendering** - `--show-religious` flag renders churches, mosques, synagogues, temples, and other places of worship using the theme's new `landmark` colour. Off by default; existing behaviour unchanged.
 - **Wetland rendering** - `--show-wetlands` flag renders OSM `natural=wetland` polygons (marshes, reedbeds, swamps, etc.) using the theme's `water` colour, useful for areas like the Bertoška Bonifika near Koper that are technically marshes but visually water bodies. Off by default; existing behaviour unchanged.
 - **Open sea/ocean rendering** - `--show-sea` flag renders the open sea for coastal locations using the theme's `water` colour. Uses OSM `natural=coastline` data and the OSM left-land/right-sea convention. Off by default; existing behaviour unchanged.
 - **uv package manager support** ([PR #20](https://github.com/originalankur/maptoposter/pull/20))
@@ -29,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Updated `.gitignore` with poster outputs, Python build artifacts, IDE files, and OS-specific files
+- **Theme schema** - new `landmark` colour key added to all 36 built-in themes (used by `--show-religious` and `--show-historic`). User-authored themes without this key fall back to the theme's `text` colour, so no migration is required.
 
 ---
 
