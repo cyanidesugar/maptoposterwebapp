@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - Community Contributions
+## [0.4.0] - 2026-05-25 (Community Contributions, @gabr42)
 
 ### Added
 - **Live theme preview** - The desktop GUI now shows a thumbnail of the most-recently-generated location in the OUTPUT column, re-rendered automatically when the theme dropdown changes. The cache (`preview_cache/preview.gpkg` + `preview_cache/preview.json`) survives app restart. Includes a new `--write-preview-cache <DIR>` CLI flag and a `write_preview_cache` parameter on `create_poster()` (GUI infrastructure; off by default).

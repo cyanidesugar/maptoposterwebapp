@@ -63,11 +63,13 @@ def build_exe():
         '--hidden-import=font_management',
         '--hidden-import=stl_generator',
         '--hidden-import=lat_lon_parser',
+        '--hidden-import=preview_cache',
 
         # Dependencies
         '--hidden-import=osmnx',
         '--hidden-import=geopandas',
         '--collect-all=trimesh',
+        '--collect-all=pyogrio',
         '--hidden-import=scipy',
         '--collect-submodules=matplotlib.backends',
         '--hidden-import=numpy',
