@@ -180,6 +180,8 @@ class ModernMapPosterGUI(ctk.CTk):
                 (self.road_sw, "roads", True),
                 (self.water_sw, "water", True),
                 (self.park_sw, "parks", True),
+                (self.sea_sw, "show_sea", False),
+                (self.wetlands_sw, "show_wetlands", False),
             ]:
                 if data.get(key, default):
                     sw.select()
@@ -213,6 +215,8 @@ class ModernMapPosterGUI(ctk.CTk):
             "roads": self.road_sw.get(),
             "water": self.water_sw.get(),
             "parks": self.park_sw.get(),
+            "show_sea": self.sea_sw.get(),
+            "show_wetlands": self.wetlands_sw.get(),
         }
 
     def _collect_recent_entry(self) -> dict:
@@ -763,6 +767,12 @@ class ModernMapPosterGUI(ctk.CTk):
         self.park_sw.select()
         self.park_sw.pack(anchor="w", padx=10, pady=8)
 
+        self.sea_sw = ctk.CTkSwitch(toggle_frame, text=" Ocean")
+        self.sea_sw.pack(anchor="w", padx=10, pady=8)
+
+        self.wetlands_sw = ctk.CTkSwitch(toggle_frame, text=" Wetlands")
+        self.wetlands_sw.pack(anchor="w", padx=10, pady=8)
+
         # Batch generation toggle
         self.all_themes_sw = ctk.CTkSwitch(toggle_frame, text=" All Themes")
         self.all_themes_sw.pack(anchor="w", padx=10, pady=8)
@@ -995,6 +1005,8 @@ class ModernMapPosterGUI(ctk.CTk):
         params["no_roads"] = not self.road_sw.get()
         params["no_water"] = not self.water_sw.get()
         params["no_parks"] = not self.park_sw.get()
+        params["show_sea"] = bool(self.sea_sw.get())
+        params["show_wetlands"] = bool(self.wetlands_sw.get())
 
         return params
 
@@ -1057,6 +1069,10 @@ class ModernMapPosterGUI(ctk.CTk):
             cmd.append("--no-water")
         if params.get("no_parks"):
             cmd.append("--no-parks")
+        if params.get("show_sea"):
+            cmd.append("--show-sea")
+        if params.get("show_wetlands"):
+            cmd.append("--show-wetlands")
 
         return cmd
 
@@ -1245,6 +1261,8 @@ class ModernMapPosterGUI(ctk.CTk):
                     no_roads=params.get("no_roads", False),
                     no_water=params.get("no_water", False),
                     no_parks=params.get("no_parks", False),
+                    show_sea=params.get("show_sea", False),
+                    show_wetlands=params.get("show_wetlands", False),
                     font_family=font_family,
                     theme=current_theme,
                     network_type=params.get("network_type", "all"),

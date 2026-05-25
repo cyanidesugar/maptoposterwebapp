@@ -411,3 +411,108 @@ class TestFontFamilySanitisation:
         assert not evil_marker.exists(), (
             "Path-traversal font name created a file outside the cache directory!"
         )
+
+
+# ===========================================================================
+# create_map_poster — _compute_sea_polygons (sea classification)
+# ===========================================================================
+
+import geopandas as gpd  # noqa: E402
+from shapely.geometry import LineString, box, Point  # noqa: E402
+
+
+class TestComputeSeaPolygons:
+    """Tests for _compute_sea_polygons in create_map_poster.
+
+    These tests use a 1000m x 1000m bbox in EPSG:3857 so the function's
+    internal 1.0 m probe offset is small relative to the bbox.
+    """
+
+    _CRS = "EPSG:3857"
+
+    def _make_gdf(self, lines):
+        return gpd.GeoDataFrame(geometry=lines, crs=self._CRS)
+
+    def test_none_input_returns_empty_list(self):
+        bbox = box(0, 0, 1000, 1000)
+        assert cmp._compute_sea_polygons(None, bbox, self._CRS) == []
+
+    def test_empty_gdf_returns_empty_list(self):
+        empty_gdf = gpd.GeoDataFrame(geometry=[], crs=self._CRS)
+        bbox = box(0, 0, 1000, 1000)
+        assert cmp._compute_sea_polygons(empty_gdf, bbox, self._CRS) == []
+
+    def test_vertical_coastline_right_half_is_sea(self):
+        """Coastline at x=500 going +Y -> right side (+X) is sea."""
+        coastline = LineString([(500, 0), (500, 1000)])
+        gdf = self._make_gdf([coastline])
+        bbox = box(0, 0, 1000, 1000)
+
+        result = cmp._compute_sea_polygons(gdf, bbox, self._CRS)
+
+        assert len(result) >= 1, "Expected at least one sea polygon"
+        sea_union = gpd.GeoSeries(result).union_all()
+        assert sea_union.contains(Point(750, 500)), (
+            "Right half (x=750) should be classified as sea"
+        )
+        assert not sea_union.contains(Point(250, 500)), (
+            "Left half (x=250) should be land, not sea"
+        )
+
+    def test_island_loop_exterior_is_sea(self):
+        """Counter-clockwise closed loop -> sea is exterior (right of direction)."""
+        # CCW square: (400,400) -> (600,400) -> (600,600) -> (400,600) -> back
+        # Segment 1 direction +X, right is -Y (exterior)
+        # Segment 2 direction +Y, right is +X (exterior)
+        # ...so exterior is sea per OSM convention.
+        loop = LineString([
+            (400, 400), (600, 400), (600, 600), (400, 600), (400, 400),
+        ])
+        gdf = self._make_gdf([loop])
+        bbox = box(0, 0, 1000, 1000)
+
+        result = cmp._compute_sea_polygons(gdf, bbox, self._CRS)
+
+        assert len(result) >= 1, "Expected at least one sea polygon"
+        sea_union = gpd.GeoSeries(result).union_all()
+        assert sea_union.contains(Point(100, 100)), (
+            "Outside the loop should be sea"
+        )
+        assert not sea_union.contains(Point(500, 500)), (
+            "Inside the loop should be land, not sea"
+        )
+
+    def test_noisy_short_segment_does_not_flip_classification(self):
+        """Regression: a tiny noisy coastline stretch must not flip the
+        classification of a polygon that's overwhelmingly bounded by a
+        well-oriented long coastline.
+
+        Setup: a long vertical coastline at x=500 going +Y (sea on right = +X).
+        Plus a tiny 4-segment zigzag at (300, 800) whose local right-side
+        probes happen to fall in the LEFT (land) half. The long coastline
+        votes correctly for the left half being LAND; the zigzag votes
+        incorrectly for the left half being SEA. The long coastline must
+        win.
+        """
+        long_coast = LineString([(500, 0), (500, 1000)])
+        # Zigzag: a noisy little stretch in the land half whose local
+        # right-perpendiculars point further into the land half.
+        zigzag = LineString([
+            (300, 800),
+            (310, 810),
+            (300, 820),
+            (310, 830),
+            (300, 840),
+        ])
+        gdf = self._make_gdf([long_coast, zigzag])
+        bbox = box(0, 0, 1000, 1000)
+
+        result = cmp._compute_sea_polygons(gdf, bbox, self._CRS)
+
+        assert len(result) >= 1
+        sea_union = gpd.GeoSeries(result).union_all()
+        # Right half is sea (correct OSM convention from the long coast)
+        assert sea_union.contains(Point(750, 500))
+        # Left half must NOT be classified as sea, despite the zigzag's
+        # local right-side votes for "sea" inside the left polygon.
+        assert not sea_union.contains(Point(250, 500))
