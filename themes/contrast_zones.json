@@ -4,6 +4,7 @@
   "bg": "#FFFFFF",
   "text": "#000000",
   "gradient_color": "#FFFFFF",
+  "landmark": "#C0392B",
   "water": "#B0B0B0",
   "parks": "#ECECEC",
   "road_motorway": "#000000",
