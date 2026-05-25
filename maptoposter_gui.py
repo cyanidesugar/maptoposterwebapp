@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 import matplotlib.font_manager as fm
 from tkinter import messagebox
+from preview_cache import load_preview_cache, render_preview, PreviewCache
 
 logger = logging.getLogger("maptoposter")
 
@@ -53,6 +54,12 @@ class ModernMapPosterGUI(ctk.CTk):
         self._generating: bool = False
         self._process: subprocess.Popen | None = None
 
+        # Preview pane state
+        self._preview_cache: PreviewCache | None = None
+        self._preview_render_token: int = 0
+        self._preview_image_handle: ctk.CTkImage | None = None
+        self._preview_render_lock = threading.Lock()
+
         # Original stdio (saved before any redirection in frozen mode)
         self._original_stdout = sys.stdout
         self._original_stderr = sys.stderr
@@ -71,6 +78,9 @@ class ModernMapPosterGUI(ctk.CTk):
         self.check_script_exists()
         self._load_last_used_settings()
 
+        # Load and render the preview from disk (or show placeholder if none)
+        self._load_and_render_preview()
+
         # Keyboard shortcuts
         self.bind("<Control-g>", lambda e: self.start_generation())
         self.bind("<Control-o>", lambda e: self.open_output_folder())
@@ -85,6 +95,11 @@ class ModernMapPosterGUI(ctk.CTk):
         if self._installed_fonts is None:
             self._installed_fonts = self._get_installed_fonts()
         return self._installed_fonts
+
+    @property
+    def _preview_cache_dir(self) -> Path:
+        """Directory where the preview cache lives (next to posters/)."""
+        return self.base_path / "preview_cache"
 
     def _load_settings(self) -> dict:
         """Load GUI settings from file."""
@@ -386,14 +401,21 @@ class ModernMapPosterGUI(ctk.CTk):
         return themes
 
     def _load_theme_descriptions(self) -> dict[str, str]:
-        """Load description field from each theme JSON."""
+        """Load description field from each theme JSON.
+
+        Side effect: populates ``self._theme_dict_cache`` with the full theme
+        dict for each parsed theme. This avoids calling ``load_theme()`` on
+        every theme dropdown change (which would log an INFO line each time).
+        """
         descriptions: dict[str, str] = {}
+        self._theme_dict_cache: dict[str, dict] = {}
         if not self.themes_dir.exists():
             return descriptions
         for path in self.themes_dir.glob("*.json"):
             try:
                 with open(path, encoding="utf-8") as f:
                     data = json.load(f)
+                self._theme_dict_cache[path.stem] = data
                 desc = data.get("description", "")
                 if desc:
                     descriptions[path.stem] = desc
@@ -402,9 +424,134 @@ class ModernMapPosterGUI(ctk.CTk):
         return descriptions
 
     def _on_theme_change(self, theme: str) -> None:
-        """Update description label when theme selection changes."""
+        """Update description label and trigger preview re-render."""
         desc = self.theme_descriptions.get(theme, "")
         self.theme_desc_label.configure(text=desc)
+        self._render_preview_async()
+
+    def _preview_target_size(self, cache: PreviewCache | None) -> tuple[int, int]:
+        """Compute preview pixel size preserving the cached poster's aspect ratio.
+
+        Bounded to 240 px in either axis. Falls back to a default portrait
+        180x240 if no cache or metadata is malformed.
+        """
+        BOUND = 240
+        DEFAULT = (180, 240)
+        if cache is None:
+            return DEFAULT
+        try:
+            w = float(cache.metadata.get("width", 12))
+            h = float(cache.metadata.get("height", 16))
+            if w <= 0 or h <= 0:
+                return DEFAULT
+            aspect = w / h
+        except (TypeError, ValueError, ZeroDivisionError):
+            return DEFAULT
+        if aspect >= 1:
+            return (BOUND, max(1, int(round(BOUND / aspect))))
+        else:
+            return (max(1, int(round(BOUND * aspect))), BOUND)
+
+    def _show_preview_placeholder(self) -> None:
+        """Display the 'generate a poster' placeholder text in the preview label."""
+        if not hasattr(self, 'preview_label'):
+            self._preview_image_handle = None
+            return  # Called during setup_ui before preview widget exists
+        try:
+            # If a previous image was set, replace it with a fully-transparent
+            # CTkImage. Passing image="" or image=None to CTkLabel.configure
+            # triggers a UserWarning (CTkImage required).
+            if self._preview_image_handle is not None:
+                from PIL import Image as _PILImage
+                blank = _PILImage.new("RGBA", (180, 240), (0, 0, 0, 0))
+                self._preview_image_handle = ctk.CTkImage(
+                    light_image=blank, dark_image=blank, size=(180, 240),
+                )
+                self.preview_label.configure(image=self._preview_image_handle)
+            # Reset size to default portrait so the placeholder is consistent
+            # regardless of what aspect the previous cache had.
+            self.preview_label.configure(
+                text="Generate a poster\nto see preview",
+                text_color="gray50",
+                width=180, height=240,
+            )
+        except Exception as e:
+            logger.debug("Could not show preview placeholder: %s", e)
+
+    def _load_and_render_preview(self) -> None:
+        """Load the cache from disk and trigger a render. Safe to call from GUI thread."""
+        cache = load_preview_cache(str(self._preview_cache_dir))
+        self._preview_cache = cache
+        if cache is None:
+            self._show_preview_placeholder()
+        else:
+            self._render_preview_async()
+
+    def _render_preview_async(self) -> None:
+        """Spawn a worker thread to render the cached preview with the current theme.
+
+        Uses a monotonic token so that a stale render's result is dropped if the
+        user changes the theme again before the first render finishes.
+        """
+        if self._preview_cache is None:
+            self._show_preview_placeholder()
+            return
+
+        with self._preview_render_lock:
+            self._preview_render_token += 1
+            token = self._preview_render_token
+
+        theme_name = self.theme_menu.get()
+        if not theme_name or theme_name == "---":
+            return  # Theme dropdown separator entry; skip
+
+        # Use the in-memory cache populated at startup to avoid the
+        # INFO log line that load_theme() emits on every call.
+        theme = getattr(self, '_theme_dict_cache', {}).get(theme_name)
+        if theme is None:
+            # Fallback for themes added after startup or that failed to parse.
+            from create_map_poster import load_theme
+            theme = load_theme(theme_name)
+        cache = self._preview_cache
+
+        target_size = self._preview_target_size(cache)
+
+        def _worker():
+            try:
+                image = render_preview(
+                    cache, theme,
+                    width_px=target_size[0], height_px=target_size[1],
+                )
+            except Exception as e:
+                logger.warning("Preview render failed: %s", e)
+                return
+            # Drop result if a newer render has been kicked off
+            with self._preview_render_lock:
+                if self._preview_render_token != token:
+                    return
+            # Marshal back to GUI thread
+            self.after(0, lambda: self._publish_preview(image, target_size))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _publish_preview(self, pil_image, target_size: tuple[int, int]) -> None:
+        """Update the preview label with a freshly-rendered image. GUI thread only.
+
+        Resizes the label to match the rendered image's aspect ratio so
+        landscape and square posters preview without distortion.
+        """
+        try:
+            ctk_image = ctk.CTkImage(
+                light_image=pil_image, dark_image=pil_image,
+                size=target_size,
+            )
+            self._preview_image_handle = ctk_image  # keep reference alive
+            self.preview_label.configure(
+                image=ctk_image, text="",
+                width=target_size[0], height=target_size[1],
+            )
+        except Exception as e:
+            logger.warning("Could not publish preview image: %s", e)
 
     def check_script_exists(self) -> None:
         """Verify the main script exists (only relevant in script/dev mode).
@@ -727,6 +874,22 @@ class ModernMapPosterGUI(ctk.CTk):
         self.stl_invert_sw = ctk.CTkSwitch(stl_print_container, text=" Invert",
                                            font=ctk.CTkFont(size=10))
         self.stl_invert_sw.pack(anchor="w", padx=10, pady=(2, 4))
+
+        # ========== Preview pane ==========
+        preview_container = ctk.CTkFrame(col3, fg_color="gray15", corner_radius=6)
+        preview_container.pack(fill="x", padx=15, pady=(15, 15))
+
+        ctk.CTkLabel(
+            preview_container, text="Preview:", anchor="w",
+            font=ctk.CTkFont(size=11, weight="bold"),
+        ).pack(fill="x", padx=10, pady=(8, 4))
+
+        self.preview_label = ctk.CTkLabel(
+            preview_container, text="",
+            width=180, height=240, anchor="center",
+            fg_color="gray20", corner_radius=4,
+        )
+        self.preview_label.pack(padx=10, pady=(0, 10))
 
         # ========== COLUMN 4: FEATURES & ACTIONS ==========
         col4 = ctk.CTkFrame(controls_container, fg_color="gray20")
@@ -1090,6 +1253,8 @@ class ModernMapPosterGUI(ctk.CTk):
         if params.get("show_historic"):
             cmd.append("--show-historic")
 
+        cmd.extend(["--write-preview-cache", str(self._preview_cache_dir)])
+
         return cmd
 
     def start_generation(self) -> None:
@@ -1284,10 +1449,12 @@ class ModernMapPosterGUI(ctk.CTk):
                     font_family=font_family,
                     theme=current_theme,
                     network_type=params.get("network_type", "all"),
+                    write_preview_cache=str(self._preview_cache_dir),
                 )
 
             self.after(0, lambda: self.log_box.insert("end", "\n[OK] SUCCESS!\n"))
             self.after(0, lambda: messagebox.showinfo("Success", "Poster generated successfully!"))
+            self.after(0, self._load_and_render_preview)
 
         except Exception as e:
             error_msg = str(e)
@@ -1348,6 +1515,7 @@ class ModernMapPosterGUI(ctk.CTk):
             if return_code == 0:
                 self.after(0, lambda: self.log_box.insert("end", "\n[OK] SUCCESS!\n"))
                 self.after(0, lambda: messagebox.showinfo("Success", "Poster generated successfully!"))
+                self.after(0, self._load_and_render_preview)
             else:
                 self.after(0, lambda rc=return_code: self.log_box.insert("end", f"\n[FAIL] Exit code {rc}\n"))
                 self.after(0, lambda rc=return_code: messagebox.showerror("Error", f"Generation failed (exit code {rc})"))
