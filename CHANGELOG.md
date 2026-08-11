@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-08-09 (Overpass reliability)
+
+### Fixed
+- **Overpass fetch reliability** - the street-network fetch no longer fails when
+  the default Overpass server is slow, overloaded, or unreachable. `fetch_graph()`
+  now:
+  - Tries a prioritised list of planet-wide Overpass endpoints
+    (`lz4.overpass-api.de` first, then `z.`/`overpass-api.de`, `maps.mail.ru`,
+    `kumi.systems`, `private.coffee`) with automatic fail-over.
+  - Health-probes each endpoint with a trivial query before sending the heavy
+    request, so dead/stalled servers are skipped in seconds instead of hanging on
+    the long read timeout.
+  - Re-probes the whole list for several rounds (Overpass congestion is transient).
+- **`lz4.overpass-api.de` is the new default endpoint** - its IP (65.x) is
+  reachable from many networks where the main `overpass-api.de` hostname (162.x)
+  is not; the bare hostname is demoted to a mid-list fallback.
+- **Force IPv4 for outbound HTTP** - several Overpass hosts publish unroutable
+  IPv6 records; Python's requests library tried them first and ate the full
+  connect timeout before falling back to IPv4. Name resolution is now restricted
+  to IPv4 (disable with `MAPTOPOSTER_FORCE_IPV4=0`).
+- **Valid Overpass query timeout** - the request timeout is a plain integer
+  again; OSMnx interpolates it into the query's `[timeout:N]` clause, so a tuple
+  produced an invalid query that strict servers rejected.
+
+### Added
+- Environment overrides: `MAPTOPOSTER_OVERPASS_URL` (preferred endpoint first),
+  `MAPTOPOSTER_OVERPASS_TIMEOUT` (read-timeout seconds),
+  `MAPTOPOSTER_OVERPASS_ROUNDS` (fail-over passes), `MAPTOPOSTER_FORCE_IPV4`.
+
+---
+
 ## [0.4.0] - 2026-05-25 (Community Contributions, @gabr42)
 
 ### Added

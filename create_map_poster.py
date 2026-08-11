@@ -115,6 +115,73 @@ POSTERS_DIR = os.path.join(BASE_DIR, "posters")
 _NOMINATIM_TIMEOUT = 10
 _NOMINATIM_RATE_LIMIT_DELAY = 1.0
 
+# Overpass API configuration.
+# overpass-api.de is OSMnx's default but is frequently overloaded and drops
+# connections. Try the default (or MAPTOPOSTER_OVERPASS_URL override) first,
+# then fall back to public mirrors on failure. Values are OSMnx base URLs
+# (no trailing /interpreter).
+# All entries must be PLANET-WIDE Overpass servers (regional extracts like
+# overpass.osm.ch only hold their own country's data and silently return zero
+# elements elsewhere). Endpoints span multiple hosting networks on purpose:
+# lz4/z/overpass-api.de and kumi/private.coffee are German/Austrian
+# (Hetzner-family) hosts, so a bad route to that network can take them down at
+# once. maps.mail.ru (VK/Russia) sits on an entirely different network and is
+# the way out when the Hetzner route is broken. (overpass.openstreetmap.fr is
+# excluded: it 403s bulk use as "not white-listed"; osm.ch/osm.jp are regional.)
+#
+# lz4.overpass-api.de is the default: its IP (65.x) is reachable from many
+# networks where the main overpass-api.de hostname (162.x) is not, so the bare
+# hostname is demoted to a mid-list fallback.
+_OVERPASS_ENDPOINTS = [
+    os.environ.get("MAPTOPOSTER_OVERPASS_URL", "https://lz4.overpass-api.de/api"),
+    "https://z.overpass-api.de/api",                # DE backend
+    "https://overpass-api.de/api",                  # main hostname - often unreachable
+    "https://maps.mail.ru/osm/tools/overpass/api",  # VK / Russia - different network
+    "https://overpass.kumi.systems/api",            # Hetzner / DE
+    "https://overpass.private.coffee/api",          # AT
+]
+# De-dupe while preserving order (in case the override equals a default mirror).
+_OVERPASS_ENDPOINTS = list(dict.fromkeys(_OVERPASS_ENDPOINTS))
+# Per-request timeout (seconds). Must be a plain positive integer: OSMnx uses
+# this same value both as the HTTP timeout AND inside the Overpass query itself
+# ("[out:json][timeout:{N}]"), so a tuple would produce an invalid query. Fast
+# fail-over for dead/stalled endpoints is handled by _overpass_healthy() below,
+# not by a short connect timeout here. Overridable via MAPTOPOSTER_OVERPASS_TIMEOUT.
+_OVERPASS_READ_TIMEOUT = int(os.environ.get("MAPTOPOSTER_OVERPASS_TIMEOUT", "180"))
+ox.settings.requests_timeout = _OVERPASS_READ_TIMEOUT
+
+# Force IPv4 for all outbound HTTP. Several Overpass hosts publish IPv6 records
+# that are unroutable from many networks; Python's requests/urllib3 tries them
+# one at a time and eats the full connect timeout on each dead IPv6 before
+# falling back to IPv4 (browsers avoid this via "Happy Eyeballs"). Restricting
+# name resolution to IPv4 skips that wasted delay entirely. Disable by setting
+# MAPTOPOSTER_FORCE_IPV4=0 (e.g. on an IPv6-only network).
+if os.environ.get("MAPTOPOSTER_FORCE_IPV4", "1") != "0":
+    try:
+        import socket as _socket
+        import urllib3.util.connection as _u3conn
+        _u3conn.allowed_gai_family = lambda: _socket.AF_INET
+    except Exception:
+        pass
+# Number of full passes over the endpoint list before giving up. Overpass load
+# is volatile: an endpoint that is congested one moment often recovers seconds
+# later, so we re-probe the whole list a few times rather than failing after a
+# single pass.
+_OVERPASS_ROUNDS = int(os.environ.get("MAPTOPOSTER_OVERPASS_ROUNDS", "3"))
+# Seconds to wait between rounds, giving a congested endpoint time to recover.
+_OVERPASS_ROUND_DELAY = 5
+# Timeout (s) for the lightweight health probe. A hung endpoint fails this
+# quickly, so we skip it instead of parking on its long read timeout.
+_OVERPASS_PROBE_TIMEOUT = 12
+# Trivial query used to health-probe an endpoint. Not every mirror exposes a
+# /status resource (openstreetmap.fr 404s, osm.ch 400s), so we probe the actual
+# interpreter with a near-empty query instead. A congested endpoint either
+# refuses the connection or stalls, failing within _OVERPASS_PROBE_TIMEOUT.
+_OVERPASS_PROBE_QUERY = "[out:json][timeout:8];node(1);out ids;"
+# Some servers (overpass-api.de) reject the default python-requests User-Agent
+# with HTTP 406, so probes send an explicit one.
+_OVERPASS_USER_AGENT = "maptoposter"
+
 # --- Module-level caches ---
 _themes_cache: Optional[list[str]] = None
 _theme_data_cache: dict[str, dict] = {}
@@ -432,6 +499,30 @@ def get_crop_limits(
     )
 
 
+def _overpass_healthy(endpoint: str) -> bool:
+    """
+    Quick liveness check for an Overpass endpoint via a trivial interpreter
+    query.
+
+    A congested/overloaded Overpass server typically refuses the connection or
+    stalls, so this cheap probe fails fast (within _OVERPASS_PROBE_TIMEOUT
+    seconds) and lets us skip the endpoint rather than parking on its much
+    longer read timeout during the actual heavy query. We probe /interpreter
+    rather than /status because not every mirror exposes /status.
+    """
+    try:
+        import requests
+        resp = requests.post(
+            f"{endpoint.rstrip('/')}/interpreter",
+            data={"data": _OVERPASS_PROBE_QUERY},
+            timeout=_OVERPASS_PROBE_TIMEOUT,
+            headers={"User-Agent": _OVERPASS_USER_AGENT},
+        )
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
 def fetch_graph(
     point: tuple[float, float],
     dist: float,
@@ -440,19 +531,44 @@ def fetch_graph(
     """
     Fetch street network graph from OpenStreetMap.
 
+    Tries each configured Overpass endpoint (default first, then mirrors),
+    probing each for liveness before sending the heavy query, and repeats the
+    whole list for a few rounds since Overpass congestion is transient.
+
     Args:
         point: (latitude, longitude) tuple for center point
         dist: Distance in meters from center point
         network_type: OSMnx network type ('drive', 'walk', 'bike', or 'all')
     """
-    try:
-        return ox.graph_from_point(
-            point, dist=dist, dist_type='bbox',
-            network_type=network_type, truncate_by_edge=True,
-        )
-    except Exception as e:
-        logger.error("OSMnx error while fetching graph: %s", e)
-        return None
+    last_error: Optional[Exception] = None
+    for round_num in range(_OVERPASS_ROUNDS):
+        for endpoint in _OVERPASS_ENDPOINTS:
+            if not _overpass_healthy(endpoint):
+                logger.info("Overpass endpoint %s not responding, skipping", endpoint)
+                continue
+            ox.settings.overpass_url = endpoint
+            logger.info("Fetching street network via %s", endpoint)
+            try:
+                # On success the working endpoint stays set in ox.settings, so
+                # subsequent feature fetches (water, parks, etc.) reuse it too.
+                return ox.graph_from_point(
+                    point, dist=dist, dist_type='bbox',
+                    network_type=network_type, truncate_by_edge=True,
+                )
+            except Exception as e:
+                last_error = e
+                logger.warning("Overpass endpoint %s failed: %s", endpoint, e)
+        if round_num < _OVERPASS_ROUNDS - 1:
+            logger.info(
+                "All Overpass endpoints busy; retrying in %ss (round %d/%d)",
+                _OVERPASS_ROUND_DELAY, round_num + 2, _OVERPASS_ROUNDS,
+            )
+            time.sleep(_OVERPASS_ROUND_DELAY)
+    if last_error is not None:
+        logger.error("OSMnx error while fetching graph: %s", last_error)
+    else:
+        logger.error("No Overpass endpoint responded after %d rounds", _OVERPASS_ROUNDS)
+    return None
 
 
 def fetch_features(
